@@ -113,7 +113,8 @@ public class PublishedApkSmokeTest {
         assertTrue(expected.matches("[a-f0-9]{64}"));
         PackageManager manager = InstrumentationRegistry.getInstrumentation().getContext().getPackageManager();
         PackageInfo info = manager.getPackageInfo("com.termux", PackageManager.GET_SIGNATURES);
-        assertEquals("0.119.0", info.versionName);
+        String version = InstrumentationRegistry.getArguments().getString("expected_version", "0.119.1");
+        assertEquals(version, info.versionName);
         assertEquals(1, info.signatures.length);
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(info.signatures[0].toByteArray());
         StringBuilder certificate = new StringBuilder();
@@ -128,6 +129,21 @@ public class PublishedApkSmokeTest {
 
     @After public void restoreRotation() {
         if (automation != null) automation.setRotation(UiAutomation.ROTATION_UNFREEZE);
+    }
+
+    @Test public void liveGboardTypingOnTheSignedApp() throws Exception {
+        String expected = InstrumentationRegistry.getArguments().getString("gboardExpected");
+        assumeTrue("Pass gboardExpected to drive actual keyboard taps", expected != null);
+        type("echo SIGNED_GBOARD_READY; IFS= read -r value; printf 'SIGNED_BYTES:'; "
+                + "printf '%s' \"$value\" | od -An -tx1 | tr -d ' \\n'; printf '\\n'");
+        enter();
+        await("SIGNED_GBOARD_READY");
+        android.util.Log.i("GboardLiveTest", "READY muxy-signed");
+        StringBuilder hex = new StringBuilder("SIGNED_BYTES:");
+        for (byte value : expected.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+            hex.append(String.format("%02x", value & 255));
+        }
+        await(hex.toString());
     }
 
     @Test public void signedAppExecutesCommandsAndRetainsItsShellAcrossRotation() throws Exception {
