@@ -76,15 +76,15 @@ public class TerminalInputConnectionTest {
         });
     }
 
-    @Test public void surroundingTextReportsOnlyLocalPreedit() {
+    @Test public void surroundingTextIncludesEditableInputAndLocalPreedit() {
         onMain(() -> {
             connection.commitText("shell text", 1);
             connection.setComposingText("a😀b", 1);
-            connection.setSelection(1, 3);
-            assertEquals("a", connection.getTextBeforeCursor(100, 0));
+            connection.setSelection(11, 13);
+            assertEquals("shell texta", connection.getTextBeforeCursor(100, 0));
             assertEquals("b", connection.getTextAfterCursor(100, 0));
             assertEquals("😀", connection.getSelectedText(0));
-            assertEquals("a😀b", connection.getExtractedText(null, 0).text);
+            assertEquals("shell texta😀b", connection.getExtractedText(null, 0).text);
             assertEquals(Arrays.asList("text:shell text"), events);
         });
     }
@@ -158,6 +158,52 @@ public class TerminalInputConnectionTest {
             assertFalse(connection.endBatchEdit());
             connection.closeConnection();
             assertFalse(connection.beginBatchEdit());
+        });
+    }
+
+    @Test public void replacementConnectionDoesNotInvalidateTheServedOne() {
+        onMain(() -> {
+            View view = new View(InstrumentationRegistry.getInstrumentation().getTargetContext());
+            TerminalInputConnection next = new TerminalInputConnection(view, connection);
+            assertTrue(connection.commitText("ㅇ", 1));
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                assertTrue(connection.replaceText(0, 1, "아", 1, null));
+                connection.closeConnection();
+                assertTrue(next.replaceText(0, 1, "안", 1, null));
+                assertEquals("안", next.getTextBeforeCursor(100, 0));
+                assertFalse(connection.replaceText(0, 1, "글", 1, null));
+            }
+            next.closeConnection();
+        });
+    }
+
+    @Test public void closingTheSessionInvalidatesEveryOutstandingWrapper() {
+        onMain(() -> {
+            View view = new View(InstrumentationRegistry.getInstrumentation().getTargetContext());
+            TerminalInputConnection next = new TerminalInputConnection(view, connection);
+            next.closeSession();
+            assertFalse(connection.commitText("stale", 1));
+            assertFalse(connection.setComposingText("stale", 1));
+            assertFalse(connection.beginBatchEdit());
+            assertFalse(connection.hasLiveSession());
+            assertTrue(events.isEmpty());
+        });
+    }
+
+    @Test public void betaReplacementAndSurroundingTextUseTheSameDocument() {
+        if (android.os.Build.VERSION.SDK_INT < 34) return;
+        onMain(() -> {
+            connection.commitText("ㅇ", 1);
+            connection.beginBatchEdit();
+            assertTrue(connection.replaceText(0, 1, "아", 1, null));
+            assertTrue(connection.replaceText(0, 1, "안", 1, null));
+            connection.endBatchEdit();
+            android.view.inputmethod.SurroundingText text = connection.getSurroundingText(100, 100, 0);
+            assertEquals("안", text.getText().toString());
+            assertEquals(1, text.getSelectionEnd());
+            assertEquals(0, text.getOffset());
+            assertEquals(Arrays.asList("text:ㅇ", "key:0:67", "text:아", "key:0:67", "text:안"), events);
+            assertEquals(-1, connection.takeSnapshot().getCompositionStart());
         });
     }
 

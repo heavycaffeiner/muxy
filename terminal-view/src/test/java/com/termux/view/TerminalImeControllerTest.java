@@ -246,6 +246,72 @@ public class TerminalImeControllerTest {
         assertTrue(events.isEmpty());
     }
 
+    @Test public void betaReplacesCommittedJamoAndCarriesTheFinalConsonant() {
+        ime.commitText("ㅇ");
+        assertTrue(ime.replaceText(0, 1, "아", 1));
+        assertTrue(ime.replaceText(0, 1, "안", 1));
+        assertEquals("안", terminal.toString());
+        assertTrue(ime.replaceText(0, 1, "아녀", 1));
+        assertTrue(ime.replaceText(1, 2, "녕", 1));
+        assertEquals("아녕", terminal.toString());
+        assertEquals("아녕", ime.editorComposition().text);
+        assertFalse(ime.isComposing());
+    }
+
+    @Test public void betaBackspaceAndAutocorrectTrackAbsoluteOffsets() {
+        for (char c : "teh quick".toCharArray()) ime.commitText(String.valueOf(c));
+        for (int i = 0; i < 2; i++) {
+            ime.terminalKeySent(KeyEvent.KEYCODE_DEL);
+            terminal.deleteCharAt(terminal.length() - 1);
+        }
+        ime.commitText("k");
+        assertTrue(ime.replaceText(4, 8, "quick ", 1));
+        for (char c : "tset".toCharArray()) ime.commitText(String.valueOf(c));
+        assertTrue(ime.replaceText(10, 14, "test ", 1));
+        assertEquals("teh quick test ", terminal.toString());
+        assertEquals(terminal.toString(), ime.editorComposition().text);
+    }
+
+    @Test public void betaCompoundFinalConsonantSplitsIntoTwoSyllables() {
+        ime.commitText("ㅇ");
+        ime.replaceText(0, 1, "아", 1);
+        ime.replaceText(0, 1, "안", 1);
+        ime.replaceText(0, 1, "앉", 1);
+        ime.replaceText(0, 1, "안자", 1);
+        assertEquals("안자", terminal.toString());
+    }
+
+    @Test public void invalidReplacementDoesNotModifyTerminalOrEditor() {
+        ime.commitText("a😀b");
+        events.clear();
+        for (int[] range : new int[][]{{-1, 2}, {0, 10}, {1, 2}, {2, 3}, {Integer.MAX_VALUE, Integer.MAX_VALUE}}) {
+            assertFalse(ime.replaceText(range[0], range[1], "x", 1));
+        }
+        assertFalse(ime.replaceText(0, 1, "x", 1));
+        assertFalse(ime.replaceText(0, 4, "\n", 1));
+        assertEquals("a😀b", ime.editorComposition().text);
+        assertTrue(events.isEmpty());
+    }
+
+    @Test public void submittedInputCannotBeRewrittenByAStaleReplacement() {
+        ime.commitText("한");
+        ime.terminalKeySent(KeyEvent.KEYCODE_ENTER);
+        assertFalse(ime.replaceText(0, 1, "글", 1));
+        ime.commitText("ㅇ");
+        assertTrue(ime.replaceText(1, 2, "아", 1));
+        assertEquals("한아", terminal.toString());
+    }
+
+    @Test public void boundedContextRetainsAbsoluteOffsetsWithoutLosingInput() {
+        String text = new String(new char[5000]).replace('\0', 'a');
+        ime.commitText(text);
+        assertEquals(text, terminal.toString());
+        assertEquals(904, ime.documentOffset());
+        assertFalse(ime.replaceText(0, 1, "b", 1));
+        assertTrue(ime.replaceText(4999, 5000, "b", 1));
+        assertEquals(text.substring(0, 4999) + "b", terminal.toString());
+    }
+
     @Test public void terminalDeletionCountIsBounded() {
         assertEquals(64, ime.terminalDeletes(Integer.MAX_VALUE));
         assertEquals(0, ime.terminalDeletes(-1));

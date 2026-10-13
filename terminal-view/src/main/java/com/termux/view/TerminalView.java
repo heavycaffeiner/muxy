@@ -142,7 +142,7 @@ public final class TerminalView extends View {
 
     private void closeInput() {
         mInputGeneration++;
-        if (mInputConnection != null) mInputConnection.closeConnection();
+        if (mInputConnection != null) mInputConnection.closeSession();
         mInputConnection = null;
         mComposition = CompositionState.EMPTY;
         mCursorMonitor = false;
@@ -165,15 +165,20 @@ public final class TerminalView extends View {
         if (manager == null) return;
         CompositionState state = mComposition;
         CompositionState editorState = mInputConnection.editorComposition();
-        int offset = editorState.text.length() - state.text.length();
+        int base = mInputConnection.documentOffset();
+        int offset = base + editorState.text.length() - state.text.length();
+        int composingStart = mInputConnection.composingStart();
+        manager.updateSelection(this, base + editorState.selectionStart, base + editorState.selectionEnd,
+                composingStart, composingStart < 0 ? -1 : base + editorState.text.length());
         CursorAnchorInfo.Builder builder = new CursorAnchorInfo.Builder();
         Matrix matrix = new Matrix();
         int[] location = new int[2];
         getLocationOnScreen(location);
         matrix.setTranslate(location[0], location[1]);
         builder.setMatrix(matrix);
-        builder.setSelectionRange(editorState.selectionStart, editorState.selectionEnd);
-        if (!state.isEmpty()) builder.setComposingText(0, editorState.text);
+        builder.setSelectionRange(base + editorState.selectionStart, base + editorState.selectionEnd);
+        if (composingStart >= 0) builder.setComposingText(composingStart,
+                editorState.text.substring(composingStart - base));
         int row = mEmulator.getInputCursorRow(), col = mEmulator.getInputCursorCol();
         int caretRow = row, caretCol = col;
         int shift = preeditShift();
@@ -384,12 +389,18 @@ public final class TerminalView extends View {
 
     @Override
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
-        closeInput();
         if (mEmulator == null || mEmulator.isClosed()) return null;
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT;
         if (mClient.shouldEnforceCharBasedInput()) outAttrs.inputType |= InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN | EditorInfo.IME_FLAG_NO_EXTRACT_UI;
-        outAttrs.initialSelStart = outAttrs.initialSelEnd = 0;
+        CompositionState initial = mInputConnection == null ? CompositionState.EMPTY : mInputConnection.editorComposition();
+        int base = mInputConnection == null ? 0 : mInputConnection.documentOffset();
+        outAttrs.initialSelStart = base + initial.selectionStart;
+        outAttrs.initialSelEnd = base + initial.selectionEnd;
+        if (mInputConnection != null && mInputConnection.hasLiveSession()) {
+            mInputConnection = new TerminalInputConnection(this, mInputConnection);
+            return mInputConnection;
+        }
         final int generation = mInputGeneration;
         final TerminalSession session = mTermSession;
         final TerminalEmulator emulator = mEmulator;
@@ -846,6 +857,7 @@ public final class TerminalView extends View {
                 mCombiningAccent = 0;
             }
             if (!mClient.onCodePoint(result, controlDown, mTermSession)) {
+                if (mInputConnection != null) mInputConnection.terminalKey(KeyEvent.KEYCODE_UNKNOWN);
                 mEmulator.key(keyCode, nativeMods(event), new String(Character.toChars(result)),
                         event.getRepeatCount() > 0 ? 2 : 1, false, event.getUnicodeChar(0));
             }
@@ -892,6 +904,7 @@ public final class TerminalView extends View {
                 }
             }
 
+            if (mInputConnection != null) mInputConnection.terminalKey(KeyEvent.KEYCODE_UNKNOWN);
             // If left alt, send escape before the code point to make e.g. Alt+B and Alt+F work in readline:
             mEmulator.key(KeyEvent.KEYCODE_UNKNOWN, (controlDown ? 2 : 0) | (altDown ? 4 : 0),
                     new String(Character.toChars(codePoint)), 1, false, Character.toLowerCase(codePoint));
@@ -909,7 +922,9 @@ public final class TerminalView extends View {
 
         TerminalEmulator term = mTermSession.getEmulator();
         if (!NativeKeyMap.isSpecial(keyCode)) return false;
-        if (mInputConnection != null && mInputConnection.terminalKey(keyCode)) return true;
+        int editorKey = (keyMod & (KeyHandler.KEYMOD_CTRL | KeyHandler.KEYMOD_ALT)) != 0
+                ? KeyEvent.KEYCODE_UNKNOWN : keyCode;
+        if (mInputConnection != null && mInputConnection.terminalKey(editorKey)) return true;
         int mods = ((keyMod & KeyHandler.KEYMOD_SHIFT) != 0 ? 1 : 0)
                 | ((keyMod & KeyHandler.KEYMOD_CTRL) != 0 ? 2 : 0)
                 | ((keyMod & KeyHandler.KEYMOD_ALT) != 0 ? 4 : 0)

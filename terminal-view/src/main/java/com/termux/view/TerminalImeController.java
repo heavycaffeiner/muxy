@@ -19,11 +19,17 @@ public final class TerminalImeController {
     }
 
     private static final int MAX_DELETE = 64;
+    private static final int MAX_CONTEXT = 4096;
     private final Sink sink;
     private CompositionState composition = CompositionState.EMPTY;
+    // Only input sent at the current terminal cursor is editable, never terminal output.
+    private String committedText = "";
+    private int documentOffset;
     private String releasedText = "";
     private String flushedText;
     private String flushedWord;
+    private int batchDepth;
+    private boolean compositionDirty;
 
     public TerminalImeController(Sink sink) {
         if (sink == null) throw new IllegalArgumentException("Missing terminal input sink");
@@ -38,20 +44,55 @@ public final class TerminalImeController {
         return !composition.isEmpty();
     }
 
+    public int documentOffset() {
+        return documentOffset;
+    }
+
+    public int composingStart() {
+        return isComposing() || !releasedText.isEmpty() ? documentOffset + committedText.length() : -1;
+    }
+
     public CompositionState editorComposition() {
-        int offset = releasedText.length();
-        return new CompositionState(releasedText + composition.text,
+        int offset = committedText.length() + releasedText.length();
+        return new CompositionState(committedText + releasedText + composition.text,
                 offset + composition.selectionStart, offset + composition.selectionEnd);
     }
 
     public void editorSelection(int start, int end) {
-        selection((int) Math.max(0, (long) start - releasedText.length()),
-                (int) Math.max(0, (long) end - releasedText.length()));
+        int offset = documentOffset + committedText.length() + releasedText.length();
+        selection((int) Math.max(0, (long) start - offset), (int) Math.max(0, (long) end - offset));
+    }
+
+    public boolean composingRegion(int start, int end) {
+        String text = committedText + releasedText + composition.text;
+        int from = Math.min(start, end) - documentOffset;
+        int to = Math.max(start, end) - documentOffset;
+        if (!validBoundary(text, from) || !validBoundary(text, to) || to != text.length()) return false;
+        // A terminal cannot safely move an arbitrary committed selection into preedit.
+        if (from > committedText.length()) return false;
+        releasedText = committedText.substring(from) + releasedText;
+        committedText = committedText.substring(0, from);
+        publish(composition);
+        return true;
+    }
+
+    public void beginBatch() {
+        batchDepth++;
+    }
+
+    public void endBatch() {
+        if (batchDepth == 0) return;
+        batchDepth--;
+        if (batchDepth == 0 && compositionDirty) {
+            compositionDirty = false;
+            sink.compositionChanged(composition);
+        }
     }
 
     private void publish(CompositionState state) {
         composition = state;
-        sink.compositionChanged(state);
+        if (batchDepth == 0) sink.compositionChanged(state);
+        else compositionDirty = true;
     }
 
     public void composingText(CharSequence text, int cursorPosition) {
@@ -99,7 +140,8 @@ public final class TerminalImeController {
         int stale = before.size() - match;
         int prefixLength = match == 0 ? 0 : after.get(match - 1).startUtf16 + after.get(match - 1).text.length();
         releasedText = "";
-        if (isComposing()) publish(CompositionState.EMPTY);
+        remember(raw.substring(0, prefixLength));
+        publish(CompositionState.EMPTY);
         for (int i = 0; i < stale; i++) sink.sendKey(KeyEvent.KEYCODE_DEL);
         String remaining = raw.substring(prefixLength);
         if (remaining.isEmpty()) return false;
@@ -107,15 +149,100 @@ public final class TerminalImeController {
         return true;
     }
 
+    public boolean replaceText(int start, int end, CharSequence text, int cursorPosition) {
+        if (start < 0 || end < 0) return false;
+        String editor = editorComposition().text;
+        long fromLong = (long) Math.min(start, end) - documentOffset;
+        long toLong = (long) Math.max(start, end) - documentOffset;
+        if (fromLong < 0 || toLong > editor.length()) return false;
+        int from = (int) fromLong, to = (int) toLong;
+        if (!validBoundary(editor, from) || !validBoundary(editor, to)) return false;
+        String replacement = TerminalText.sanitizeUtf16(text);
+        // Rewrites across a submitted line are not reversible terminal edits.
+        if (replacement.indexOf('\n') >= 0 || replacement.indexOf('\r') >= 0) return false;
+        String target = editor.substring(0, from) + replacement + editor.substring(to);
+        long caret = cursorPosition > 0 ? (long) from + replacement.length() + cursorPosition - 1
+                : (long) from + cursorPosition;
+        if (Math.max(0, Math.min(target.length(), caret)) != target.length()) return false;
+        List<PreeditLayout.Cluster> before = PreeditLayout.clusters(committedText + releasedText, true);
+        List<PreeditLayout.Cluster> after = PreeditLayout.clusters(target, true);
+        int match = 0;
+        while (match < before.size() && match < after.size() && before.get(match).text.equals(after.get(match).text)) match++;
+        int deletes = before.size() - match;
+        if (deletes > MAX_DELETE) return false;
+        int prefix = match == 0 ? 0 : after.get(match - 1).startUtf16 + after.get(match - 1).text.length();
+        String added = target.substring(prefix);
+        committedText = target;
+        releasedText = "";
+        flushedText = null;
+        flushedWord = null;
+        trimContext();
+        publish(CompositionState.EMPTY);
+        for (int i = 0; i < deletes; i++) sink.sendKey(KeyEvent.KEYCODE_DEL);
+        if (!added.isEmpty()) sink.sendText(added);
+        return true;
+    }
+
+    private static boolean validBoundary(String text, int offset) {
+        return offset >= 0 && offset <= text.length() && (offset == 0 || offset == text.length()
+                || !Character.isHighSurrogate(text.charAt(offset - 1)) || !Character.isLowSurrogate(text.charAt(offset)));
+    }
+
+    private void remember(String text) {
+        committedText += text;
+        trimContext();
+    }
+
+    private void trimContext() {
+        if (committedText.length() <= MAX_CONTEXT) return;
+        int limit = committedText.length() - MAX_CONTEXT;
+        int cut = committedText.length();
+        for (PreeditLayout.Cluster cluster : PreeditLayout.clusters(committedText, true)) {
+            if (cluster.startUtf16 >= limit) { cut = cluster.startUtf16; break; }
+        }
+        documentOffset += cut;
+        committedText = committedText.substring(cut);
+    }
+
+    // A submitted line or terminal navigation ends the suffix that an IME may rewrite.
+    public void terminalKeySent(int code) {
+        if (code == KeyEvent.KEYCODE_DEL && !committedText.isEmpty()) {
+            List<PreeditLayout.Cluster> clusters = PreeditLayout.clusters(committedText, true);
+            committedText = committedText.substring(0, clusters.get(clusters.size() - 1).startUtf16);
+            publish(composition);
+        } else if (code == KeyEvent.KEYCODE_SPACE) {
+            remember(" ");
+            publish(composition);
+        } else if (code != KeyEvent.KEYCODE_DEL) {
+            documentOffset += committedText.length() + releasedText.length() + composition.text.length();
+            committedText = "";
+            releasedText = "";
+            publish(CompositionState.EMPTY);
+            if (code != KeyEvent.KEYCODE_ENTER && code != KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                flushedText = null;
+                flushedWord = null;
+            }
+        }
+    }
+
     private void sendCommitted(String text) {
         int start = 0;
         for (int i = 0; i < text.length(); i++) {
-            if (text.charAt(i) != '\n') continue;
-            if (i > start) sink.sendText(text.substring(start, i));
+            if (text.charAt(i) != '\n' && text.charAt(i) != '\r') continue;
+            if (i > start) {
+                remember(text.substring(start, i));
+                sink.sendText(text.substring(start, i));
+            }
+            // Preserve the flush echo guard until the IME delivers its pending commit.
+            documentOffset += committedText.length();
+            committedText = "";
             sink.sendKey(KeyEvent.KEYCODE_ENTER);
             start = i + 1;
         }
-        if (start < text.length()) sink.sendText(text.substring(start));
+        if (start < text.length()) {
+            remember(text.substring(start));
+            sink.sendText(text.substring(start));
+        }
     }
 
     public void selection(int start, int end) {
@@ -174,6 +301,7 @@ public final class TerminalImeController {
         String text = composition.text;
         flushedText = text;
         flushedWord = releasedText + text;
+        remember(releasedText + text);
         releasedText = "";
         publish(CompositionState.EMPTY);
         sink.sendText(text);
@@ -184,6 +312,7 @@ public final class TerminalImeController {
     }
 
     public void abandonComposition() {
+        remember(releasedText);
         releasedText = "";
         flushedText = null;
         flushedWord = null;
@@ -195,6 +324,11 @@ public final class TerminalImeController {
     }
 
     public void close() {
+        committedText = "";
+        releasedText = "";
+        documentOffset = 0;
+        batchDepth = 0;
+        compositionDirty = false;
         abandonComposition();
     }
 }

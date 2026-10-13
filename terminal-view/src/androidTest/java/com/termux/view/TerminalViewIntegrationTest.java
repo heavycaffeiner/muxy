@@ -114,6 +114,20 @@ public class TerminalViewIntegrationTest {
         }
     }
 
+    @Test public void liveGboardTypingReachesThePty() throws Exception {
+        String expected = InstrumentationRegistry.getArguments().getString("gboardExpected");
+        org.junit.Assume.assumeNotNull(expected);
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            android.view.inputmethod.InputMethodManager manager = (android.view.inputmethod.InputMethodManager)
+                    activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+            manager.restartInput(activity.view);
+            manager.showSoftInput(activity.view, 0);
+        });
+        android.util.Log.i("GboardLiveTest", "READY muxy");
+        assertCaptured(expected);
+    }
+
     @Test public void hangulEnterAndLateEchoReachTheRealPtyOnce() throws Exception {
         prepareCapture();
         scenario.onActivity(activity -> {
@@ -148,12 +162,36 @@ public class TerminalViewIntegrationTest {
             assertFalse(input.endBatchEdit());
             assertTrue(input.beginBatchEdit());
             input.setComposingText("한ㄱ", 1);
-            assertEquals("한ㄱ", input.getTextBeforeCursor(100, 0));
+            assertEquals("안녕 한ㄱ", input.getTextBeforeCursor(100, 0));
             input.setComposingText("한글", 1);
-            assertEquals("한글", input.getTextBeforeCursor(100, 0));
+            assertEquals("안녕 한글", input.getTextBeforeCursor(100, 0));
             input.commitText("한글", 1);
             assertFalse(input.endBatchEdit());
             enter();
+        });
+        assertCaptured("안녕 한글");
+    }
+
+    @Test public void betaReplacementsReachTheRealPtyWithoutLosingJamo() throws Exception {
+        if (android.os.Build.VERSION.SDK_INT < 34) return;
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            InputConnection discarded = activity.view.onCreateInputConnection(new EditorInfo());
+            input.commitText("ㅇ", 1);
+            assertTrue(input.replaceText(0, 1, "아", 1, null));
+            assertTrue(input.replaceText(0, 1, "안", 1, null));
+            input.commitText("ㄴ", 1);
+            assertTrue(input.replaceText(1, 2, "녀", 1, null));
+            assertTrue(input.replaceText(1, 2, "녕", 1, null));
+            input.commitText(" ", 1);
+            input.commitText("ㅎ", 1);
+            input.replaceText(3, 4, "하", 1, null);
+            input.replaceText(3, 4, "한", 1, null);
+            input.commitText("ㄱ", 1);
+            input.replaceText(4, 5, "그", 1, null);
+            input.replaceText(4, 5, "글", 1, null);
+            enter();
+            discarded.closeConnection();
         });
         assertCaptured("안녕 한글");
     }
