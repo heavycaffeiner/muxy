@@ -46,6 +46,54 @@ public class TerminalInputConnectionTest {
                 }));
     }
 
+    @Test public void modifierPressAndReleaseKeepLegacyPreeditAndDoNotSendKeys() {
+        onMain(() -> {
+            connection.setComposingText("이", 1);
+            for (int key : new int[]{KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT,
+                    KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_ALT_RIGHT, KeyEvent.KEYCODE_META_LEFT}) {
+                for (int action : new int[]{KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP}) {
+                    assertTrue(connection.sendKeyEvent(new KeyEvent(action, key)));
+                    assertEquals("이", connection.composition().text);
+                }
+            }
+            connection.setComposingText("있", 1);
+            connection.commitText("있", 1);
+            assertEquals(Arrays.asList("text:있"), events);
+        });
+    }
+
+    @Test public void modifierPressDuringBetaInputDoesNotInvalidateReplacementOffsets() {
+        if (android.os.Build.VERSION.SDK_INT < 34) return;
+        onMain(() -> {
+            for (int shift : new int[]{KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT}) {
+                int start = connection.documentOffset() + connection.editorComposition().text.length();
+                connection.commitText("ㅇ", 1);
+                assertTrue(connection.replaceText(start, start + 1, "이", 1, null));
+                assertTrue(connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, shift)));
+                assertFalse(connection.terminalKey(shift));
+                assertTrue(connection.replaceText(start, start + 1, "있", 1, null));
+                assertTrue(connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, shift)));
+                assertEquals("있", connection.getTextBeforeCursor(1, 0));
+            }
+            assertTrue(events.stream().noneMatch(e -> e.equals("key:0:59") || e.equals("key:0:60")));
+            assertEquals("있있", connection.editorComposition().text);
+        });
+    }
+
+    @Test public void controlChordStillCancelsCompositionAndForwardsAfterAModifierPress() {
+        onMain(() -> {
+            connection.setComposingText("이", 1);
+            assertTrue(connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_CTRL_LEFT)));
+            long time = android.os.SystemClock.uptimeMillis();
+            KeyEvent chord = new KeyEvent(time, time, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_C, 0,
+                    KeyEvent.META_CTRL_ON | KeyEvent.META_CTRL_LEFT_ON);
+            assertTrue(connection.sendKeyEvent(chord));
+            assertTrue(connection.sendKeyEvent(KeyEvent.changeAction(chord, KeyEvent.ACTION_UP)));
+            assertTrue(connection.composition().isEmpty());
+            assertEquals(Arrays.asList("key:0:31", "key:1:31"), events);
+        });
+    }
+
     @Test public void enterFlushSurvivesNestedSpecialKeyDispatch() {
         onMain(() -> {
             connection.setComposingText("한", 1);

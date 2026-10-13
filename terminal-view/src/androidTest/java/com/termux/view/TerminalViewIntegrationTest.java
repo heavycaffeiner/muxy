@@ -128,6 +128,65 @@ public class TerminalViewIntegrationTest {
         assertCaptured(expected);
     }
 
+    @Test public void physicalShiftBetweenTheVowelAndDoubleFinalPreservesBetaReplacement() throws Exception {
+        org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 34);
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            for (int shift : new int[]{KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT}) {
+                TerminalInputConnection connection = (TerminalInputConnection) input;
+                int start = connection.documentOffset() + connection.editorComposition().text.length();
+                input.commitText("ㅇ", 1);
+                assertTrue(input.replaceText(start, start + 1, "이", 1, null));
+                long time = android.os.SystemClock.uptimeMillis();
+                KeyEvent down = new KeyEvent(time, time, KeyEvent.ACTION_DOWN, shift, 0,
+                        KeyEvent.META_SHIFT_ON, 1, 42, 0, android.view.InputDevice.SOURCE_KEYBOARD);
+                assertTrue(activity.view.dispatchKeyEvent(down));
+                assertTrue(input.replaceText(start, start + 1, "있", 1, null));
+                assertTrue(activity.view.dispatchKeyEvent(KeyEvent.changeAction(down, KeyEvent.ACTION_UP)));
+            }
+            enter();
+        });
+        assertCaptured("있있");
+    }
+
+    @Test public void wheelOnTheAlternateScreenStillSendsArrowKeys() throws Exception {
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            byte[] mode = "\033[?1049h".getBytes(StandardCharsets.UTF_8);
+            activity.session.getEmulator().append(mode, mode.length);
+            android.view.MotionEvent.PointerProperties pointer = new android.view.MotionEvent.PointerProperties();
+            pointer.id = 0;
+            pointer.toolType = android.view.MotionEvent.TOOL_TYPE_MOUSE;
+            android.view.MotionEvent.PointerCoords point = new android.view.MotionEvent.PointerCoords();
+            point.x = 20; point.y = 40;
+            point.setAxisValue(android.view.MotionEvent.AXIS_VSCROLL, 1);
+            long time = android.os.SystemClock.uptimeMillis();
+            android.view.MotionEvent scroll = android.view.MotionEvent.obtain(time, time,
+                    android.view.MotionEvent.ACTION_SCROLL, 1,
+                    new android.view.MotionEvent.PointerProperties[]{pointer},
+                    new android.view.MotionEvent.PointerCoords[]{point}, 0, 0, 1f, 1f, 1, 0,
+                    android.view.InputDevice.SOURCE_TOUCHPAD, 0);
+            try { assertTrue(activity.view.onGenericMotionEvent(scroll)); } finally { scroll.recycle(); }
+            enter();
+        });
+        assertCaptured("\033[A\033[A\033[A");
+    }
+
+    @Test public void physicalShiftDuringLegacyPreeditKeepsTheWholeSyllable() throws Exception {
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            input.setComposingText("이", 1);
+            assertTrue(activity.view.onKeyDown(KeyEvent.KEYCODE_SHIFT_LEFT,
+                    new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_SHIFT_LEFT)));
+            input.setComposingText("있", 1);
+            assertTrue(activity.view.onKeyUp(KeyEvent.KEYCODE_SHIFT_LEFT,
+                    new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_SHIFT_LEFT)));
+            input.commitText("있", 1);
+            enter();
+        });
+        assertCaptured("있");
+    }
+
     @Test public void hangulEnterAndLateEchoReachTheRealPtyOnce() throws Exception {
         prepareCapture();
         scenario.onActivity(activity -> {

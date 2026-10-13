@@ -124,7 +124,7 @@ public final class TerminalInputConnection extends BaseInputConnection {
     }
 
     public boolean terminalKey(int code) {
-        if (!hasLiveSession() || session.forwarding) return false;
+        if (!hasLiveSession() || session.forwarding || KeyEvent.isModifierKey(code)) return false;
         if (!controller.isComposing()) {
             controller.terminalKeySent(code);
             return false;
@@ -281,6 +281,7 @@ public final class TerminalInputConnection extends BaseInputConnection {
 
     @Override public boolean sendKeyEvent(KeyEvent event) {
         if (isClosed() || event == null) return false;
+        if (KeyEvent.isModifierKey(event.getKeyCode())) return true;
         if (event.getAction() == KeyEvent.ACTION_UP && localKeys.remove(event.getKeyCode())) return true;
         if (event.getAction() != KeyEvent.ACTION_DOWN) return session.forward(event, controller.isComposing(), false);
         if (event.isCtrlPressed() || event.getKeyCode() == KeyEvent.KEYCODE_ESCAPE) {

@@ -24,6 +24,23 @@ Legacy `setComposingText` remains supported. Settled Hangul syllables are releas
 
 Android can call `onCreateInputConnection` and discard its result while retaining an earlier connection. New connection wrappers share the editor session without closing the served wrapper. An explicit terminal session reset invalidates all wrappers. Closed wrappers reject callbacks.
 
+## Physical Shift and touchpad follow-up (muxy only)
+
+A modifier-only `KeyEvent` was treated as new terminal input. In the committed-jamo path, pressing Shift after `이` invalidated the range Gboard needed to replace with `있`. Modifier down/up events now leave the editor document and preedit intact. Printable Shift chords and Ctrl shortcuts keep their existing paths.
+
+Touchpad two-finger travel can arrive as classified `ACTION_MOVE` events rather than `ACTION_SCROLL`. muxy now handles those gesture axes, unclassified two-pointer `SOURCE_TOUCHPAD` travel, and wheel events from mouse or touchpad sources. Historical travel samples are summed. Partial rows accumulate only for the same device and destination. Duplicate touch/generic deliveries are consumed once. Pinch and horizontal-only gestures do not create vertical scroll or remote button drags.
+
+The existing scroll destinations remain: normal screen history, mouse wheel reports when requested by the application, and arrow keys on an alternate screen without mouse tracking.
+
+Verification for this follow-up:
+
+- 159 emulator and 46 input/layout/scroll JVM tests pass. Debug app build and terminal-view lint pass.
+- The 41-scenario Android connection/View/pointer suite completes without failures on API 21 x86 and API 35 x86_64. The manually driven IME case and API 34-only gesture cases are skipped where their prerequisites are absent.
+- Injected Linux keyboard events on the emulator's keyboard device passed through actual Gboard `18.1.3.962075747-beta-arm64-v8a` and `18.4.1.985164140-release-arm64-v8a`. `D`, `L`, left Shift+`T` produced `있`; subsequent left/right Shift sequences produced `쌍 때`. The real PTY received `있 쌍 때` as the expected UTF-8.
+- Pointer tests exercise mouse wheels, fractional touchpad wheels, classified two-finger travel in both directions, batched travel, late classification without a false mouse click, duplicate delivery, primary mouse press/release, remote wheel output, and alternate-screen arrow output.
+
+No physical keyboard/touchpad device was attached to the test host. Keyboard verification used the emulator's Linux input device; pointer verification constructed Android MotionEvents. OEM event variations and touchpad hardware remain unverified. Remotly was not changed in this follow-up.
+
 ## Emulator evidence
 
 Tested on API 35, x86_64, using Gboard's Korean 2-set layout. ARM64 builds run through the system ARM translation layer. The AVD used two CPU cores; four cores caused these ARM64 Gboard builds to crash in their native decoder before input testing.

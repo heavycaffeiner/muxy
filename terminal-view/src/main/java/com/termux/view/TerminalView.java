@@ -85,6 +85,17 @@ public final class TerminalView extends View {
 
     /** What was left in from scrolling movement. */
     float mScrollRemainder;
+    // Inlined Android 14 values allow these routes to load on API 21.
+    private static final int TOUCHPAD_SWIPE = 3, TOUCHPAD_MULTI_SWIPE = 4, TOUCHPAD_PINCH = 5;
+    private static final int TOUCHPAD_SCROLL_X = 50, TOUCHPAD_SCROLL_Y = 51;
+    private final PointerScrollAccumulator mPointerScroll = new PointerScrollAccumulator();
+    private boolean mTouchpadScrolling;
+    private boolean mMousePrimaryPressed;
+    private float mTouchpadY;
+    private int mTouchpadDevice = -1;
+    private long mLastPointerScrollTime = Long.MIN_VALUE;
+    private int mLastPointerScrollDevice, mLastPointerScrollAction, mLastPointerScrollHistory;
+    private float mLastPointerScrollTravel;
 
     /** If non-zero, this is the last unicode code point received if that was a combining character. */
     int mCombiningAccent;
@@ -255,7 +266,7 @@ public final class TerminalView extends View {
                     // This means that we never report moving with button press-events for touch input,
                     // since we cannot just start sending these events without a starting press event,
                     // which we do not do for touch input, only mouse in onTouchEvent().
-                    sendMouseEventCode(e, TerminalEmulator.MOUSE_LEFT_BUTTON_MOVED, true);
+                    if (mMousePrimaryPressed) sendMouseEventCode(e, TerminalEmulator.MOUSE_LEFT_BUTTON_MOVED, true);
                 } else {
                     scrolledWithFinger = true;
                     distanceY += mScrollRemainder;
@@ -372,6 +383,7 @@ public final class TerminalView extends View {
         if (session == mTermSession) return false;
 
         closeInput();
+        resetPointerScroll();
         mTermSession = session;
         mEmulator = null;
         mCombiningAccent = 0;
@@ -604,22 +616,120 @@ public final class TerminalView extends View {
         }
     }
 
-    /** Overriding {@link View#onGenericMotionEvent(MotionEvent)}. */
+    private boolean isPhysicalPointer(MotionEvent event) {
+        return event.isFromSource(InputDevice.SOURCE_MOUSE) || event.isFromSource(InputDevice.SOURCE_TOUCHPAD)
+                || event.getPointerCount() > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE;
+    }
+
+    private int gestureClassification(MotionEvent event) {
+        return Build.VERSION.SDK_INT >= 29 ? event.getClassification() : 0;
+    }
+
+    private float pointerTravel(MotionEvent event, int axis) {
+        float sum = event.getAxisValue(axis);
+        if (Float.isNaN(sum) || Float.isInfinite(sum)) sum = 0;
+        for (int i = 0; i < event.getHistorySize(); i++) {
+            float value = event.getHistoricalAxisValue(axis, i);
+            if (!Float.isNaN(value) && !Float.isInfinite(value)) sum += value;
+        }
+        return sum;
+    }
+
+    private void pointerScroll(MotionEvent event, float rows) {
+        if (mEmulator == null || mEmulator.isClosed() || Float.isNaN(rows) || Float.isInfinite(rows)) return;
+        if (mLastPointerScrollTime == event.getEventTime() && mLastPointerScrollDevice == event.getDeviceId()
+                && mLastPointerScrollAction == event.getActionMasked() && mLastPointerScrollHistory == event.getHistorySize()
+                && mLastPointerScrollTravel == rows) return;
+        mLastPointerScrollTime = event.getEventTime();
+        mLastPointerScrollDevice = event.getDeviceId();
+        mLastPointerScrollAction = event.getActionMasked();
+        mLastPointerScrollHistory = event.getHistorySize();
+        mLastPointerScrollTravel = rows;
+        int destination = mEmulator.isMouseTrackingActive() ? 1 : mEmulator.isAlternateBufferActive() ? 2 : 0;
+        int steps = mPointerScroll.advance(rows, event.getDeviceId(), destination);
+        mScroller.abortAnimation();
+        if (steps != 0) doScroll(event, steps);
+    }
+
+    private void resetPointerScroll() {
+        mPointerScroll.reset();
+        mTouchpadScrolling = false;
+        mTouchpadDevice = -1;
+        mMousePrimaryPressed = false;
+        mLastPointerScrollTime = Long.MIN_VALUE;
+    }
+
+    private float pointerCenterY(MotionEvent event) {
+        float sum = 0;
+        for (int i = 0; i < event.getPointerCount(); i++) sum += event.getY(i);
+        return sum / event.getPointerCount();
+    }
+
+    private boolean handleTouchpadScroll(MotionEvent event) {
+        if (!isPhysicalPointer(event)) return false;
+        int classification = gestureClassification(event);
+        boolean classified = classification == TOUCHPAD_SWIPE || classification == TOUCHPAD_MULTI_SWIPE
+                || classification == TOUCHPAD_PINCH;
+        boolean rawPad = event.isFromSource(InputDevice.SOURCE_TOUCHPAD);
+        int action = event.getActionMasked();
+        float travel = pointerTravel(event, TOUCHPAD_SCROLL_Y);
+        boolean rawSwipe = rawPad && event.getPointerCount() >= 2;
+        if (mTouchpadScrolling && mTouchpadDevice != event.getDeviceId()) resetPointerScroll();
+        if (!classified && !rawSwipe && travel == 0 && !mTouchpadScrolling) return false;
+        if (mEmulator == null || mEmulator.isClosed()) return true;
+        if (action == MotionEvent.ACTION_DOWN || !mTouchpadScrolling || mTouchpadDevice != event.getDeviceId()) {
+            mPointerScroll.reset();
+            mScroller.abortAnimation();
+            mTouchpadY = pointerCenterY(event);
+            mTouchpadDevice = event.getDeviceId();
+            mTouchpadScrolling = true;
+            if (mMousePrimaryPressed) {
+                sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, false);
+                mMousePrimaryPressed = false;
+            }
+            if (action != MotionEvent.ACTION_DOWN) {
+                MotionEvent cancel = MotionEvent.obtain(event);
+                cancel.setAction(MotionEvent.ACTION_CANCEL);
+                mGestureRecognizer.onTouchEvent(cancel);
+                cancel.recycle();
+            }
+            if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
+        }
+        if (action == MotionEvent.ACTION_MOVE && mRenderer != null && mRenderer.mFontLineSpacing > 0) {
+            if (classification == TOUCHPAD_SWIPE || !classified && travel != 0) {
+                float horizontal = pointerTravel(event, TOUCHPAD_SCROLL_X);
+                if (Math.abs(travel) >= Math.abs(horizontal)) pointerScroll(event, travel / mRenderer.mFontLineSpacing);
+            } else if (rawSwipe && !classified) {
+                float y = pointerCenterY(event);
+                pointerScroll(event, (mTouchpadY - y) / mRenderer.mFontLineSpacing);
+                mTouchpadY = y;
+            }
+        }
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            resetPointerScroll();
+            if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
+        }
+        return true;
+    }
+
     @Override
     public boolean onGenericMotionEvent(MotionEvent event) {
-        if (mEmulator != null && event.isFromSource(InputDevice.SOURCE_MOUSE) && event.getAction() == MotionEvent.ACTION_SCROLL) {
-            // Handle mouse wheel scrolling.
-            boolean up = event.getAxisValue(MotionEvent.AXIS_VSCROLL) > 0.0f;
-            doScroll(event, up ? -3 : 3);
+        if (isPhysicalPointer(event) && event.getActionMasked() == MotionEvent.ACTION_SCROLL && mEmulator != null) {
+            pointerScroll(event, -pointerTravel(event, MotionEvent.AXIS_VSCROLL) * 3f);
             return true;
         }
-        return false;
+        if (handleTouchpadScroll(event)) return true;
+        return super.onGenericMotionEvent(event);
     }
 
     @SuppressLint("ClickableViewAccessibility")
     @Override
     @TargetApi(23)
     public boolean onTouchEvent(MotionEvent event) {
+        if (isPhysicalPointer(event) && event.getActionMasked() == MotionEvent.ACTION_SCROLL) {
+            return onGenericMotionEvent(event);
+        }
+        if (handleTouchpadScroll(event)) return true;
         if (mEmulator == null) return true;
         final int action = event.getAction();
 
@@ -641,14 +751,21 @@ public final class TerminalView extends View {
                         if (!TextUtils.isEmpty(text)) mEmulator.paste(text.toString());
                     }
                 }
-            } else if (mEmulator.isMouseTrackingActive()) { // BUTTON_PRIMARY.
-                switch (event.getAction()) {
+            } else if (mEmulator.isMouseTrackingActive()) {
+                switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
+                        if (event.isButtonPressed(MotionEvent.BUTTON_PRIMARY)) {
+                            mMousePrimaryPressed = true;
+                            sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, true);
+                        }
+                        break;
                     case MotionEvent.ACTION_UP:
-                        sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, event.getAction() == MotionEvent.ACTION_DOWN);
+                    case MotionEvent.ACTION_CANCEL:
+                        if (mMousePrimaryPressed) sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, false);
+                        mMousePrimaryPressed = false;
                         break;
                     case MotionEvent.ACTION_MOVE:
-                        sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON_MOVED, true);
+                        if (mMousePrimaryPressed) sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON_MOVED, true);
                         break;
                 }
             }
@@ -783,11 +900,13 @@ public final class TerminalView extends View {
      */
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (KeyEvent.isModifierKey(keyCode)) return true;
         if (mInputConnection != null && !mComposition.isEmpty()) return mInputConnection.sendKeyEvent(event);
         return dispatchKeyDown(keyCode, event);
     }
 
     private boolean dispatchKeyDown(int keyCode, KeyEvent event) {
+        if (KeyEvent.isModifierKey(keyCode)) return true;
         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
             mClient.logInfo(LOG_TAG, "onKeyDown(keyCode=" + keyCode + ", isSystem()=" + event.isSystem() + ", event=" + event + ")");
         if (mEmulator == null) return true;
@@ -913,6 +1032,7 @@ public final class TerminalView extends View {
 
     /** Input the specified keyCode if applicable and return if the input was consumed. */
     public boolean handleKeyCode(int keyCode, int keyMod) {
+        if (KeyEvent.isModifierKey(keyCode)) return true;
         // Ensure cursor is shown when a key is pressed down like long hold on (arrow) keys
         if (mEmulator != null)
             mEmulator.setCursorBlinkState(true);
@@ -962,6 +1082,7 @@ public final class TerminalView extends View {
      */
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (KeyEvent.isModifierKey(keyCode)) return true;
         if (mInputConnection != null) return mInputConnection.sendKeyEvent(event);
         return dispatchKeyUp(keyCode, event);
     }
@@ -1488,6 +1609,7 @@ public final class TerminalView extends View {
 
     @Override
     protected void onDetachedFromWindow() {
+        resetPointerScroll();
         closeInput();
         super.onDetachedFromWindow();
 
