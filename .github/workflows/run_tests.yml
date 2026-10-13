@@ -26,7 +26,7 @@ jobs:
         python3 terminal-emulator/native/install-zig.py "$RUNNER_TEMP/muxy-zig"
         echo "$RUNNER_TEMP/muxy-zig" >> "$GITHUB_PATH"
         NDK_VERSION="$(awk -F= '$1 == "ndkVersion" {print $2}' gradle.properties)"
-        sdkmanager "ndk;$NDK_VERSION"
+        "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
     - name: Execute tests
       run: |
         ./gradlew test
