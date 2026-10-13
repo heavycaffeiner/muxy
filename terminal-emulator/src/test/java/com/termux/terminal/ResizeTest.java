@@ -183,8 +183,9 @@ public class ResizeTest extends TerminalTestCase {
 
 	public void testResizeWithLineWrappingContinuing() {
 		withTerminalSized(5, 3).enterString("\r\nAB DE").assertLinesAre("     ", "AB DE", "     ");
-		resize(4, 3).assertLinesAre("AB D", "E   ", "    ");
-		resize(3, 3).assertLinesAre("AB ", "DE ", "   ");
+        // Native reflow keeps the leading empty row and the cursor's content together.
+		resize(4, 3).assertLinesAre("    ", "AB D", "E   ");
+		resize(3, 3).assertLinesAre("   ", "AB ", "DE ");
 		resize(5, 3).assertLinesAre("     ", "AB DE", "     ");
 	}
 

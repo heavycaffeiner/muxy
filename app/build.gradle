@@ -43,8 +43,8 @@ android {
     defaultConfig {
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
-        versionCode 118
-        versionName "0.118.0"
+        versionCode 119
+        versionName "0.119.0"
 
         if (appVersionName) versionName = appVersionName
         validateVersionName(versionName)
@@ -233,6 +233,12 @@ task downloadBootstraps() {
         } else {
             throw new GradleException("Unsupported TERMUX_PACKAGE_VARIANT \"" + packageVariant + "\"")
         }
+    }
+}
+
+tasks.configureEach {
+    if (name.startsWith('configureNdkBuild') || name.startsWith('buildNdkBuild')) {
+        dependsOn downloadBootstraps
     }
 }
 

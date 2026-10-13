@@ -48,7 +48,7 @@ public final class TextStyle {
     /** Normal foreground and background colors and no effects. */
     final static long NORMAL = encode(COLOR_INDEX_FOREGROUND, COLOR_INDEX_BACKGROUND, 0);
 
-    static long encode(int foreColor, int backColor, int effect) {
+    public static long encode(int foreColor, int backColor, int effect) {
         long result = effect & 0b111111111;
         if ((0xff000000 & foreColor) == 0xff000000) {
             // 24-bit color.

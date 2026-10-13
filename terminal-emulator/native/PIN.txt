@@ -1,0 +1,14 @@
+repo: https://github.com/ghostty-org/ghostty
+commit: 0ba6250388641f52135414b38c4259aa682c489b
+zig: 0.16.0
+android-api: 21
+license: MIT
+
+Remotly reference HEAD: 38f8eead5fa9f7f4261d89808d336a9969ede512
+Reference files were read from its working tree. They were not modified.
+
+SHA-256 reference snapshots:
+ae34ff0ea9043f63700f51f3a953e2c839b2b54c38f2c4b5f2aba26d07de0d00  remotly_terminal.c
+ec34814ee7c94af09b9bc38eae41076ab09b3960f389d0edb32458429fd3d498  CompositionState.kt
+ffc47b069920083f88322f9eb86445ab43bab968edcd6e43a873af8ce1d3c308  TerminalImeController.kt
+fba72d61bca5894d18c09c4278ac667ee3eeb1980a78ea5dacddc76269fd2442  TerminalInputConnection.kt

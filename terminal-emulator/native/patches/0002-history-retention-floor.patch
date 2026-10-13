@@ -1,0 +1,28 @@
+diff --git a/src/terminal/PageList.zig b/src/terminal/PageList.zig
+--- a/src/terminal/PageList.zig
++++ b/src/terminal/PageList.zig
+@@ -817,8 +817,9 @@ pub fn assertIntegrity(self: *const PageList) IntegrityError!void {
+-    // A line limit may only be exceeded when the oldest page also contains
+-    // active rows. Complete historical pages are always eligible for pruning.
++    // Keep the boundary page when pruning it would undershoot the requested
++    // history retention. Byte limits still take precedence when configured.
+     if (self.total_rows > self.rows) {
+         const history_rows = self.total_rows - self.rows;
+         if (history_rows > self.limits.max(.lines) and
+-            self.pages.first.? != self.getTopLeft(.active).node)
++            self.pages.first.? != self.getTopLeft(.active).node and
++            history_rows - self.pages.first.?.rows() >= self.limits.max(.lines))
+         {
+             log.warn(
+@@ -6932,5 +6933,11 @@ pub const Limits = struct {
+             // The page containing the active top may also contain history. Keep
+             // that boundary page whole even if its history exceeds the heuristic.
+             if (first == pagelist.getTopLeft(.active).node) break;
++
++            if (key == .lines and
++                pagelist.total_rows - pagelist.rows - first.rows() < self.max(.lines))
++            {
++                break;
++            }
+ 
+             if (removed == 0) pagelist.page_compression.markActivity();

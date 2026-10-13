@@ -13,7 +13,7 @@ android {
     defaultConfig {
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
-        testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -39,6 +39,14 @@ android {
 
 dependencies {
     testImplementation "junit:junit:4.13.2"
+    androidTestImplementation "androidx.test:runner:1.6.2"
+    androidTestImplementation "androidx.test:core:1.6.1"
+    androidTestImplementation "androidx.test.ext:junit:1.2.1"
+}
+
+tasks.withType(Test).configureEach {
+    dependsOn ':terminal-emulator:prepareHostJni'
+    systemProperty 'java.library.path', project(':terminal-emulator').file('build/native/host/jni').absolutePath
 }
 
 task sourceJar(type: Jar) {
@@ -54,7 +62,7 @@ afterEvaluate {
                 from components.default
                 groupId = 'com.termux'
                 artifactId = 'terminal-view'
-                version = '0.118.0'
+                version = '0.119.0'
                 artifact(sourceJar)
             }
         }

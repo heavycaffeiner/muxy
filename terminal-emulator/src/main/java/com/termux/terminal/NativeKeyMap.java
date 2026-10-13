@@ -1,0 +1,139 @@
+package com.termux.terminal;
+
+public final class NativeKeyMap {
+    private NativeKeyMap() {}
+    public static int fromAndroid(int code) {
+        switch (code) {
+            case 3: return 71; // home
+            case 7: return 6; // 0
+            case 8: return 7; // 1
+            case 9: return 8; // 2
+            case 10: return 9; // 3
+            case 11: return 10; // 4
+            case 12: return 11; // 5
+            case 13: return 12; // 6
+            case 14: return 13; // 7
+            case 15: return 14; // 8
+            case 16: return 15; // 9
+            case 19: return 78; // dpad_up
+            case 20: return 75; // dpad_down
+            case 21: return 76; // dpad_left
+            case 22: return 77; // dpad_right
+            case 26: return 167; // power
+            case 29: return 20; // a
+            case 30: return 21; // b
+            case 31: return 22; // c
+            case 32: return 23; // d
+            case 33: return 24; // e
+            case 34: return 25; // f
+            case 35: return 26; // g
+            case 36: return 27; // h
+            case 37: return 28; // i
+            case 38: return 29; // j
+            case 39: return 30; // k
+            case 40: return 31; // l
+            case 41: return 32; // m
+            case 42: return 33; // n
+            case 43: return 34; // o
+            case 44: return 35; // p
+            case 45: return 36; // q
+            case 46: return 37; // r
+            case 47: return 38; // s
+            case 48: return 39; // t
+            case 49: return 40; // u
+            case 50: return 41; // v
+            case 51: return 42; // w
+            case 52: return 43; // x
+            case 53: return 44; // y
+            case 54: return 45; // z
+            case 55: return 5; // comma
+            case 56: return 47; // period
+            case 57: return 51; // alt_left
+            case 58: return 52; // alt_right
+            case 59: return 61; // shift_left
+            case 60: return 62; // shift_right
+            case 61: return 64; // tab
+            case 62: return 63; // space
+            case 66: return 58; // enter
+            case 67: return 53; // del
+            case 68: return 1; // grave
+            case 69: return 46; // minus
+            case 71: return 3; // left_bracket
+            case 72: return 4; // right_bracket
+            case 73: return 2; // backslash
+            case 74: return 49; // semicolon
+            case 75: return 48; // apostrophe
+            case 76: return 50; // slash
+            case 78: return 79; // num
+            case 85: return 162; // media_play_pause
+            case 86: return 164; // media_stop
+            case 92: return 74; // page_up
+            case 93: return 73; // page_down
+            case 111: return 120; // escape
+            case 112: return 68; // forward_del
+            case 113: return 56; // ctrl_left
+            case 114: return 57; // ctrl_right
+            case 115: return 54; // caps_lock
+            case 116: return 149; // scroll_lock
+            case 120: return 148; // sysrq
+            case 121: return 150; // break
+            case 122: return 71; // move_home
+            case 123: return 69; // move_end
+            case 124: return 72; // insert
+            case 131: return 121; // f1
+            case 132: return 122; // f2
+            case 133: return 123; // f3
+            case 134: return 124; // f4
+            case 135: return 125; // f5
+            case 136: return 126; // f6
+            case 137: return 127; // f7
+            case 138: return 128; // f8
+            case 139: return 129; // f9
+            case 140: return 130; // f10
+            case 141: return 131; // f11
+            case 142: return 132; // f12
+            case 143: return 79; // num_lock
+            case 144: return 80; // numpad_0
+            case 145: return 81; // numpad_1
+            case 146: return 82; // numpad_2
+            case 147: return 83; // numpad_3
+            case 148: return 84; // numpad_4
+            case 149: return 85; // numpad_5
+            case 150: return 86; // numpad_6
+            case 151: return 87; // numpad_7
+            case 152: return 88; // numpad_8
+            case 153: return 89; // numpad_9
+            case 154: return 96; // numpad_divide
+            case 155: return 104; // numpad_multiply
+            case 156: return 107; // numpad_subtract
+            case 157: return 90; // numpad_add
+            case 159: return 94; // numpad_comma
+            case 160: return 97; // numpad_enter
+            case 216: return 19; // yen
+            case 217: return 18; // ro
+            case 223: return 168; // sleep
+            case 259: return 70; // help
+            case 277: return 174; // cut
+            case 278: return 173; // copy
+            case 279: return 175; // paste
+            case 326: return 133; // f13
+            case 327: return 134; // f14
+            case 328: return 135; // f15
+            case 329: return 136; // f16
+            case 330: return 137; // f17
+            case 331: return 138; // f18
+            case 332: return 139; // f19
+            case 333: return 140; // f20
+            case 334: return 141; // f21
+            case 335: return 142; // f22
+            case 336: return 143; // f23
+            case 337: return 144; // f24
+            default: return 0;
+        }
+    }
+    public static boolean isSpecial(int code) {
+        return code == 4 || code >= 19 && code <= 23 || code == 61 || code == 66 || code == 67
+                || code == 92 || code == 93 || code == 111 || code == 112 || code == 122 || code == 123
+                || code >= 131 && code <= 161;
+    }
+}

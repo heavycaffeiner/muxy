@@ -2,3 +2,7 @@ jdk:
   - openjdk17
 env:
   JITPACK_NDK_VERSION: "29.0.14206865"
+  ZIG: "/tmp/muxy-zig/zig"
+before_install:
+  - python3 terminal-emulator/native/install-zig.py /tmp/muxy-zig
+  - sdkmanager "ndk;29.0.14206865"

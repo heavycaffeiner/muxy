@@ -506,7 +506,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             TerminalColors.COLOR_SCHEME.updateWith(props);
             TerminalSession session = mActivity.getCurrentSession();
             if (session != null && session.getEmulator() != null) {
-                session.getEmulator().mColors.reset();
+                session.getEmulator().resetColors();
             }
             updateBackgroundColor();
 

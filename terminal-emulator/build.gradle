@@ -10,6 +10,7 @@ android {
     defaultConfig {
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
+        consumerProguardFiles 'consumer-rules.pro'
 
         externalNativeBuild {
             ndkBuild {
@@ -53,7 +54,26 @@ android {
     }
 }
 
-tasks.withType(Test) {
+def prepareGhostty = tasks.register('prepareGhostty', Exec) {
+    workingDir projectDir
+    environment 'ANDROID_HOME', android.sdkDirectory.absolutePath
+    commandLine 'bash', 'native/build.sh'
+}
+
+tasks.configureEach {
+    if (name.startsWith('configureNdkBuild') || name.startsWith('buildNdkBuild')) {
+        dependsOn prepareGhostty
+    }
+}
+
+def prepareHostJni = tasks.register('prepareHostJni', Exec) {
+    workingDir projectDir
+    commandLine 'bash', 'native/build-host-jni.sh', System.getProperty('java.home')
+}
+
+tasks.withType(Test).configureEach {
+    dependsOn prepareHostJni
+    systemProperty 'java.library.path', file('build/native/host/jni').absolutePath
     testLogging {
         events "started", "passed", "skipped", "failed"
     }
@@ -77,7 +97,7 @@ afterEvaluate {
                 from components.default
                 groupId = 'com.termux'
                 artifactId = 'terminal-emulator'
-                version = '0.118.0'
+                version = '0.119.0'
                 artifact(sourceJar)
             }
         }

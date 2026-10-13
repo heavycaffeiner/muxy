@@ -1,0 +1,637 @@
+diff --git a/src/lib_vt.zig b/src/lib_vt.zig
+index b65d12883..84b47c96a 100644
+--- a/src/lib_vt.zig
++++ b/src/lib_vt.zig
+@@ -302,6 +302,14 @@ comptime {
+             @export(&c.render_state_row_cells_free, .{ .name = "ghostty_render_state_row_cells_free" });
+             @export(&c.render_state_free, .{ .name = "ghostty_render_state_free" });
+         }
++        @export(&c.muxy_events, .{ .name = "ghostty_muxy_events" });
++        @export(&c.muxy_cell, .{ .name = "ghostty_muxy_cell" });
++        @export(&c.muxy_scroll, .{ .name = "ghostty_muxy_scroll" });
++        @export(&c.muxy_cursor, .{ .name = "ghostty_muxy_cursor" });
++        @export(&c.muxy_advance, .{ .name = "ghostty_muxy_advance" });
++        @export(&c.muxy_keyboard, .{ .name = "ghostty_muxy_keyboard" });
++        @export(&c.muxy_reset_colors, .{ .name = "ghostty_muxy_reset_colors" });
++        @export(&c.muxy_take_failure, .{ .name = "ghostty_muxy_take_failure" });
+         @export(&c.terminal_new, .{ .name = "ghostty_terminal_new" });
+         @export(&c.terminal_free, .{ .name = "ghostty_terminal_free" });
+         @export(&c.terminal_reset, .{ .name = "ghostty_terminal_reset" });
+diff --git a/src/terminal/Parser.zig b/src/terminal/Parser.zig
+index 34e7e30f4..79ed0d940 100644
+--- a/src/terminal/Parser.zig
++++ b/src/terminal/Parser.zig
+@@ -206,7 +206,7 @@ pub const MAX_INTERMEDIATE = 4;
+ /// number. I implore TUI authors to not use more than this number of CSI
+ /// params, but I suspect we'll introduce a slow path with heap allocation
+ /// one day.
+-pub const MAX_PARAMS = 24;
++pub const MAX_PARAMS = 32;
+ 
+ /// Current state of the state machine
+ state: State,
+@@ -343,9 +343,10 @@ inline fn doAction(self: *Parser, action: TransitionAction, c: u8) ?Action {
+                 // Ignore too many parameters
+                 if (self.params_idx >= MAX_PARAMS) break :param null;
+ 
+-                // Set param final value
++                // Set param final value. A separator after the last slot
++                // starts a dropped parameter, so it marks no sub-parameter.
+                 self.params[self.params_idx] = self.param_acc;
+-                if (c == ':') self.params_sep.set(self.params_idx);
++                if (c == ':' and self.params_idx + 1 < MAX_PARAMS) self.params_sep.set(self.params_idx);
+                 self.params_idx += 1;
+ 
+                 // Reset current param value to 0
+@@ -371,13 +372,18 @@ inline fn doAction(self: *Parser, action: TransitionAction, c: u8) ?Action {
+             break :osc_put null;
+         },
+         .csi_dispatch => csi_dispatch: {
+-            // Ignore too many parameters
+-            if (self.params_idx >= MAX_PARAMS) break :csi_dispatch null;
+-
+-            // Finalize parameters if we have one
+-            if (self.param_acc_idx > 0) {
+-                self.params[self.params_idx] = self.param_acc;
+-                self.params_idx += 1;
++            // Keep the first MAX_PARAMS parameters of a longer sequence, as
++            // Termux did, instead of dropping it.
++            if (self.params_idx < MAX_PARAMS) {
++                if (self.param_acc_idx > 0) {
++                    self.params[self.params_idx] = self.param_acc;
++                    self.params_idx += 1;
++                } else if (c == 'm' and self.params_idx > 0 and self.intermediates_idx == 0) {
++                    // A trailing separator ends with an empty parameter,
++                    // which SGR reads as zero.
++                    self.params[self.params_idx] = 0;
++                    self.params_idx += 1;
++                }
+             }
+ 
+             const result: Action = .{
+diff --git a/src/terminal/Screen.zig b/src/terminal/Screen.zig
+index 41149f6da..fa386e6d5 100644
+--- a/src/terminal/Screen.zig
++++ b/src/terminal/Screen.zig
+@@ -48,6 +48,7 @@ pages: PageList,
+ /// this because max_size 0 in PageList gets rounded up to two pages so
+ /// we can always have an active screen.
+ no_scrollback: bool = false,
++blank_style_failed: bool = false,
+ 
+ /// The current cursor position
+ cursor: Cursor,
+@@ -996,9 +997,7 @@ pub fn cursorDownScroll(self: *Screen) !void {
+         // Our new row is always dirty
+         self.cursorMarkDirty();
+ 
+-        // Clear the new row so it gets our bg color. We only do this
+-        // if we have a bg color at all.
+-        if (self.cursor.style.bg_color != .none) {
++        if (self.cursor.style_id != style.default_id) {
+             const page: *Page = self.cursor.page_pin.node.page();
+             self.clearCells(
+                 page,
+@@ -1008,15 +1007,6 @@ pub fn cursorDownScroll(self: *Screen) !void {
+         }
+     }
+ 
+-    if (self.cursor.style_id != style.default_id) {
+-        // The newly created line needs to be styled according to
+-        // the bg color if it is set.
+-        if (self.cursor.style.bgCell()) |blank_cell| {
+-            const cell_current: [*]pagepkg.Cell = @ptrCast(self.cursor.page_cell);
+-            const cells = cell_current - self.cursor.x;
+-            @memset(cells[0..self.pages.cols], blank_cell);
+-        }
+-    }
+ }
+ 
+ /// This scrolls the active area at and above the cursor.
+@@ -1109,13 +1099,8 @@ pub fn cursorScrollAbove(self: *Screen) !void {
+     }
+ 
+     if (self.cursor.style_id != style.default_id) {
+-        // The newly created line needs to be styled according to
+-        // the bg color if it is set.
+-        if (self.cursor.style.bgCell()) |blank_cell| {
+-            const cell_current: [*]pagepkg.Cell = @ptrCast(self.cursor.page_cell);
+-            const cells = cell_current - self.cursor.x;
+-            @memset(cells[0..self.pages.cols], blank_cell);
+-        }
++        const page = self.cursor.page_pin.node.page();
++        self.clearCells(page, self.cursor.page_row, page.getCells(self.cursor.page_row));
+     }
+ }
+ 
+@@ -1249,8 +1234,7 @@ pub fn cursorScrollRegionUp(self: *Screen, limit: usize) !void {
+ 
+         // Whether our blank cell is a plain zero cell. This is true
+         // unless the cursor has a background color set (see blankCell).
+-        const blank_is_zero = self.cursor.style_id == style.default_id or
+-            self.cursor.style.bg_color == .none;
++        const blank_is_zero = self.cursor.style_id == style.default_id;
+ 
+         if (!row.managedMemory() and blank_is_zero) {
+             // Hot path: the row has no managed memory (styles,
+@@ -1350,12 +1334,9 @@ fn cursorScrollRegionUpSlow(self: *Screen, limit: usize) !void {
+     self.cursor.page_row = page_rac.row;
+     self.cursor.page_cell = page_rac.cell;
+ 
+-    // eraseRowBounded clears the new row with zero cells so if our
+-    // blank cell isn't zero (bg color is set) we need to fill it.
+-    const blank = self.blankCell();
+-    if (!blank.isZero()) {
+-        const cells: [*]Cell = @ptrCast(self.cursor.page_cell);
+-        @memset((cells - self.cursor.x)[0..self.pages.cols], blank);
++    if (self.cursor.style_id != style.default_id) {
++        const page = self.cursor.page_pin.node.page();
++        self.clearCells(page, self.cursor.page_row, page.getCells(self.cursor.page_row));
+     }
+ }
+ 
+@@ -1777,7 +1758,24 @@ pub fn clearCells(
+         }
+     }
+ 
+-    @memset(cells, self.blankCell());
++    self.fillBlankCells(page, row, cells);
++}
++
++fn fillBlankCells(self: *Screen, page: *Page, row: *Row, cells: []Cell) void {
++    if (cells.len == 0) return;
++    if (self.cursor.style.default()) {
++        @memset(cells, .{});
++        return;
++    }
++    // Page-local style IDs cannot be copied from the cursor's page.
++    const id = page.styles.add(page.memory, self.cursor.style) catch {
++        self.blank_style_failed = true;
++        @memset(cells, self.blankCell());
++        return;
++    };
++    if (cells.len > 1) page.styles.useMultiple(page.memory, id, @intCast(cells.len - 1));
++    @memset(cells, .{ .style_id = id });
++    row.styled = true;
+ }
+ 
+ /// Clear cells but only if they are not protected.
+@@ -1999,6 +1997,8 @@ pub inline fn resize(
+     // or restore it unchanged if the resize fails. We also save the original
+     // node and serial so after a successful resize we can tell whether that
+     // page survived and still needs its temporary references released.
++    const old_cols = self.pages.cols;
++    const old_total_rows = self.pages.total_rows;
+     const cursor_node = self.cursor.page_pin.node;
+     const cursor_node_serial = cursor_node.serial;
+     const cursor_style = self.cursor.style;
+@@ -2090,6 +2090,26 @@ pub inline fn resize(
+         self.cursor.style_id = 0;
+     };
+ 
++    // Newly exposed cells use the current style, including foreground and effects.
++    const added_rows = self.pages.total_rows -| old_total_rows;
++    for (0..opts.rows) |y| {
++        const pin = self.pages.pin(.{ .active = .{ .y = @intCast(y) } }).?;
++        const page = pin.node.page();
++        const row = pin.rowAndCell().row;
++        const cells = page.getCells(row);
++        if (old_cols == opts.cols) {
++            if (y >= opts.rows -| added_rows) self.clearCells(page, row, cells);
++        } else {
++            var x: usize = 0;
++            while (x < cells.len) {
++                if (!cells[x].isZero()) { x += 1; continue; }
++                const start = x;
++                while (x < cells.len and cells[x].isZero()) x += 1;
++                self.fillBlankCells(page, row, cells[start..x]);
++            }
++        }
++    }
++
+     // If we reflowed a saved cursor, update it.
+     if (saved_cursor_pin) |p| {
+         // This should never fail because a non-null saved_cursor_pin
+diff --git a/src/terminal/Terminal.zig b/src/terminal/Terminal.zig
+index b935b505f..a2cbf3835 100644
+--- a/src/terminal/Terminal.zig
++++ b/src/terminal/Terminal.zig
+@@ -1439,7 +1439,11 @@ pub fn print(self: *Terminal, c: u21) !void {
+         // characters are ALWAYS attached to some other non-zero-width
+         // character at the time of writing.
+         if (self.screens.active.cursor.x == 0 and left == 1) {
+-            log.warn("zero-width character with no prior character, ignoring", .{});
++            // Attach a mark at column zero to the cell under the cursor,
++            // using a blank base when it is empty, as Termux did.
++            self.screens.active.cursorMarkDirty();
++            if (!self.screens.active.cursor.page_cell.hasText()) self.printCell(' ', .narrow);
++            try self.screens.active.appendGrapheme(self.screens.active.cursor.page_cell, c);
+             return;
+         }
+ 
+@@ -1800,6 +1804,15 @@ pub fn linefeed(self: *Terminal) !void {
+ 
+ /// Backspace moves the cursor back a column (but not less than 0).
+ pub fn backspace(self: *Terminal) void {
++    // Termux moved back over a soft wrap to the end of the previous row.
++    const screen = self.screens.active;
++    if (screen.cursor.x == self.scrolling_region.left and screen.cursor.y > 0 and
++        !screen.cursor.pending_wrap and screen.cursorRowUp(1).wrap)
++    {
++        screen.cursorAbsolute(self.scrolling_region.right, screen.cursor.y - 1);
++        screen.cursorResetWrap();
++        return;
++    }
+     self.cursorLeft(1);
+ }
+ 
+@@ -2324,10 +2337,7 @@ pub fn index(self: *Terminal) !void {
+     // If the cursor is inside the scrolling region and on the bottom-most
+     // line, then we scroll up. If our scrolling region is the full screen
+     // we create scrollback.
+-    if (screen.cursor.y == self.scrolling_region.bottom and
+-        screen.cursor.x >= self.scrolling_region.left and
+-        screen.cursor.x <= self.scrolling_region.right)
+-    {
++    if (screen.cursor.y == self.scrolling_region.bottom) {
+         if (comptime build_options.kitty_graphics) {
+             // Scrolling dirties the images because it updates their placements pins.
+             screen.kitty_images.dirty = true;
+@@ -2351,6 +2361,8 @@ pub fn index(self: *Terminal) !void {
+             return;
+         }
+ 
++        if (try self.scrollRegionIntoHistory()) return;
++
+         // Slow path for left and right scrolling region margins.
+         if (self.scrolling_region.left != 0 or
+             self.scrolling_region.right != self.cols - 1)
+@@ -2555,9 +2567,78 @@ pub fn scrollUp(self: *Terminal, count: usize) !void {
+         return;
+     }
+ 
++    var remaining = count;
++    if (self.scrolling_region.top > 0) {
++        self.screens.active.cursorAbsolute(0, self.scrolling_region.bottom);
++        const height = self.scrolling_region.bottom - self.scrolling_region.top + 1;
++        remaining = @min(count, height);
++        while (remaining > 0) : (remaining -= 1) {
++            if (!try self.scrollRegionIntoHistory()) break;
++        }
++        if (remaining == 0) return;
++    }
++
+     // Move to the top of the scroll region
+     self.screens.active.cursorAbsolute(self.scrolling_region.left, self.scrolling_region.top);
+-    self.deleteLines(count);
++    self.deleteLines(remaining);
++}
++
++/// Scroll a full-width region below a top margin by one row, keeping the
++/// row that leaves the region in the scrollback like Termux. The rows above
++/// the margin stay in place. The cursor must be on the region's bottom row.
++/// Returns false when the region cannot be handled here.
++fn scrollRegionIntoHistory(self: *Terminal) !bool {
++    const screen = self.screens.active;
++    const region = self.scrolling_region;
++    if (region.top == 0 or region.bottom <= region.top or region.left != 0 or
++        region.right != self.cols - 1 or screen.no_scrollback or
++        screen.cursor.y != region.bottom) return false;
++    const first = screen.pages.pin(.{ .active = .{} }) orelse return false;
++    const last = screen.pages.pin(.{ .active = .{ .y = region.top } }) orelse return false;
++    if (first.node != last.node) {
++        const source_page = last.node.page();
++        var capacity = source_page.capacity;
++        capacity.rows = 1;
++        var scratch = try @import("page.zig").Page.init(capacity);
++        defer scratch.deinit();
++        const scratch_row = &scratch.rows.ptr(scratch.memory.ptr)[0];
++        try scratch.cloneRowFrom(source_page, scratch_row, last.rowAndCell().row);
++
++        // Carry each page's last row into the next page before rotating it.
++        var current = last.node;
++        while (true) {
++            const start: usize = if (current == first.node) first.y else 0;
++            const end: usize = if (current == last.node) last.y + 1 else current.rows();
++            const page = current.page();
++            screen.pages.invalidateNodeLayout(current);
++            @import("../fastmem.zig").rotateOnceR(Row, page.rows.ptr(page.memory.ptr)[start..end]);
++            if (current == first.node) {
++                current = screen.clonePartialRowGrowCapacity(current, start, &scratch, scratch_row, 0, self.cols);
++                current.page().dirty = true;
++                break;
++            }
++            const previous = current.prev.?;
++            const previous_page = previous.page();
++            const previous_row = &previous_page.rows.ptr(previous_page.memory.ptr)[previous.rows() - 1];
++            current = screen.clonePartialRowGrowCapacity(current, start, previous_page, previous_row, 0, self.cols);
++            current.page().dirty = true;
++            current = previous;
++        }
++        screen.cursorReload();
++        try screen.cursorScrollAbove();
++        return true;
++    }
++
++    // Rotate the departing row to the top of the active area, so the
++    // ordinary scroll moves it into the scrollback and the fixed rows
++    // end up where they were.
++    const page = first.node.page();
++    const rows = page.rows.ptr(page.memory.ptr);
++    screen.pages.invalidateNodeLayout(first.node);
++    @import("../fastmem.zig").rotateOnceR(Row, rows[first.y .. last.y + 1]);
++    page.dirty = true;
++    try screen.cursorScrollAbove();
++    return true;
+ }
+ 
+ /// Options for scrolling the viewport of the terminal grid.
+diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
+index 9a3374504..6c24f075e 100644
+--- a/src/terminal/c/main.zig
++++ b/src/terminal/c/main.zig
+@@ -179,6 +179,14 @@ pub const style_is_default = style.style_is_default;
+ pub const sys_log_stderr = sys.logStderr;
+ pub const sys_set = sys.set;
+ 
++pub const muxy_events = terminal.muxy_events;
++pub const muxy_cell = terminal.muxy_cell;
++pub const muxy_scroll = terminal.muxy_scroll;
++pub const muxy_cursor = terminal.muxy_cursor;
++pub const muxy_advance = terminal.muxy_advance;
++pub const muxy_keyboard = terminal.muxy_keyboard;
++pub const muxy_reset_colors = terminal.muxy_reset_colors;
++pub const muxy_take_failure = terminal.muxy_take_failure;
+ pub const terminal_new = terminal.new;
+ pub const terminal_free = terminal.free;
+ pub const terminal_reset = terminal.reset;
+diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
+index 55d488158..7b8813cdd 100644
+--- a/src/terminal/c/terminal.zig
++++ b/src/terminal/c/terminal.zig
+@@ -487,6 +487,85 @@ const Effects = struct {
+ /// C: GhosttyTerminal
+ pub const Terminal = ?*TerminalWrapper;
+ 
++pub fn muxy_events(value: Terminal, callback: ?@import("../muxy_compat.zig").Callback, userdata: ?*anyopaque) callconv(lib.calling_conv) void {
++    const wrapper = value orelse return;
++    wrapper.stream.handler.muxy.callback = callback;
++    wrapper.stream.handler.muxy.userdata = userdata;
++}
++
++pub fn muxy_cell(value: Terminal, x: u16, y: u16, cp: u32, encoded: u64) callconv(lib.calling_conv) Result {
++    const wrapper = value orelse return .invalid_value;
++    const t = wrapper.terminal;
++    if (x >= t.cols or y >= t.rows or cp > 0x10ffff or (cp >= 0xd800 and cp <= 0xdfff)) return .invalid_value;
++    const compat = @import("../muxy_compat.zig");
++    var buffer: [64]u8 = undefined;
++    const image = encoded & 0x8000 != 0;
++    const uri = if (image) std.fmt.bufPrint(&buffer, "muxy-cell-image:{x:0>16}", .{encoded}) catch return .out_of_memory else null;
++    const scalar: u21 = @intCast(cp);
++    compat.cell(t, x, y, &.{scalar}, if (image) .{} else compat.decodedStyle(encoded), encoded & 128 != 0, uri) catch return .out_of_memory;
++    return .success;
++}
++
++pub fn muxy_advance(value: Terminal, count: u16, x: u16) callconv(lib.calling_conv) Result {
++    const wrapper = value orelse return .invalid_value;
++    if (x >= wrapper.terminal.cols) return .invalid_value;
++    for (0..count) |_| wrapper.terminal.index() catch return .out_of_memory;
++    wrapper.terminal.screens.active.cursorHorizontalAbsolute(x);
++    wrapper.terminal.screens.active.cursor.pending_wrap = false;
++    return .success;
++}
++
++/// Drop program color overrides (OSC 4, 10, 11, 12) so the defaults apply.
++pub fn muxy_reset_colors(value: Terminal) callconv(lib.calling_conv) void {
++    const wrapper = value orelse return;
++    const t = wrapper.terminal;
++    t.colors.palette.resetAll();
++    t.colors.foreground.reset();
++    t.colors.background.reset();
++    t.colors.cursor.reset();
++    t.flags.dirty.palette = true;
++}
++
++/// Kitty keyboard flags in the low byte, modifyOtherKeys level 2 in bit 8.
++pub fn muxy_keyboard(value: Terminal) callconv(lib.calling_conv) u32 {
++    const wrapper = value orelse return 0;
++    const t = wrapper.terminal;
++    const flags: u32 = t.screens.active.kitty_keyboard.current().int();
++    return flags | (@as(u32, @intFromBool(t.flags.modify_other_keys_2)) << 8);
++}
++
++/// Return and clear the processing failure flag, so one failed sequence
++/// does not mark every later write as failed.
++pub fn muxy_take_failure(value: Terminal) callconv(lib.calling_conv) bool {
++    const wrapper = value orelse return false;
++    var failed = wrapper.stream.handler.semantic_failure;
++    wrapper.stream.handler.semantic_failure = false;
++    var screens = wrapper.terminal.screens.all.iterator();
++    while (screens.next()) |entry| {
++        failed = failed or entry.value.*.blank_style_failed;
++        entry.value.*.blank_style_failed = false;
++    }
++    return failed;
++}
++
++pub fn muxy_cursor(value: Terminal, x: u16, y: u16) callconv(lib.calling_conv) Result {
++    const wrapper = value orelse return .invalid_value;
++    if (x >= wrapper.terminal.cols or y >= wrapper.terminal.rows) return .invalid_value;
++    wrapper.terminal.screens.active.cursorAbsolute(x, y);
++    wrapper.terminal.screens.active.cursor.pending_wrap = false;
++    return .success;
++}
++
++pub fn muxy_scroll(value: Terminal) callconv(lib.calling_conv) Result {
++    const wrapper = value orelse return .invalid_value;
++    const t = wrapper.terminal;
++    const region = t.scrolling_region;
++    defer t.scrolling_region = region;
++    t.scrolling_region = .{ .top = 0, .bottom = t.rows - 1, .left = 0, .right = t.cols - 1 };
++    t.scrollUp(1) catch return .out_of_memory;
++    return .success;
++}
++
+ /// C: GhosttyTerminalCompressionMode
+ pub const CompressionMode = ZigTerminal.CompressionMode;
+ 
+@@ -1301,8 +1380,12 @@ pub fn resize(
+ }
+ 
+ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
+-    const t: *ZigTerminal = (terminal_ orelse return).terminal;
+-    t.fullReset();
++    const wrapper = terminal_ orelse return;
++    wrapper.stream.parser.deinit();
++    wrapper.stream.parser = .init();
++    wrapper.stream.parser.osc_parser.alloc = wrapper.terminal.gpa();
++    wrapper.stream.utf8decoder = .{};
++    wrapper.stream.handler.muxy.reset(wrapper.terminal) catch { wrapper.stream.handler.semantic_failure = true; };
+ }
+ 
+ /// C: GhosttyKittyGraphics
+diff --git a/src/terminal/sgr.zig b/src/terminal/sgr.zig
+index 3fecd4469..d9a218ed5 100644
+--- a/src/terminal/sgr.zig
++++ b/src/terminal/sgr.zig
+@@ -206,7 +206,7 @@ pub const Parser = struct {
+ 
+         const slice = self.params[self.idx..self.params.len];
+         // Call inlined for performance reasons.
+-        const colon = @call(
++        var colon = @call(
+             .always_inline,
+             SepList.isSet,
+             .{ self.params_sep, self.idx },
+@@ -226,19 +226,13 @@ pub const Parser = struct {
+                 4, 38, 48, 58 => {},
+ 
+                 else => {
+-                    // In real world use it's very rare
+-                    // that we receive an invalid sequence.
+                     @branchHint(.cold);
+ 
+-                    // Consume all the colon separated
+-                    // values and return them as unknown.
+-                    const start = self.idx;
++                    // Skip the sub-parameters and apply the base code,
++                    // as Termux did.
+                     while (self.params_sep.isSet(self.idx)) self.idx += 1;
+                     self.idx += 1;
+-                    return .{ .unknown = .{
+-                        .full = self.params,
+-                        .partial = slice[0..@min(self.idx - start + 1, slice.len)],
+-                    } };
++                    colon = false;
+                 },
+             }
+         }
+@@ -462,11 +456,7 @@ pub const Parser = struct {
+             @branchHint(.likely);
+ 
+             self.idx += 4;
+-            return @unionInit(Attribute, @tagName(tag), .{
+-                .r = @truncate(slice[2]),
+-                .g = @truncate(slice[3]),
+-                .b = @truncate(slice[4]),
+-            });
++            return self.directRgb(tag, slice[2..5]);
+         }
+ 
+         // We have a colon, we might have either 5 or 6 values depending
+@@ -478,32 +468,40 @@ pub const Parser = struct {
+                 @branchHint(.likely);
+ 
+                 self.idx += 4;
+-                return @unionInit(Attribute, @tagName(tag), .{
+-                    .r = @truncate(slice[2]),
+-                    .g = @truncate(slice[3]),
+-                    .b = @truncate(slice[4]),
+-                });
++                return self.directRgb(tag, slice[2..5]);
+             },
+ 
+             4 => {
+                 self.idx += 5;
+-                return @unionInit(Attribute, @tagName(tag), .{
+-                    .r = @truncate(slice[3]),
+-                    .g = @truncate(slice[4]),
+-                    .b = @truncate(slice[5]),
+-                });
++                return self.directRgb(tag, slice[3..6]);
+             },
+ 
+             else => {
+-                // Invalid/unknown SGRs just don't happen very often at all.
+                 @branchHint(.cold);
+ 
++                // Extra sub-parameters after R:G:B are skipped, as Termux did.
++                if (count > 4) {
++                    self.idx += count + 1;
++                    return self.directRgb(tag, slice[2..5]);
++                }
+                 self.consumeUnknownColon();
+                 return null;
+             },
+         }
+     }
+ 
++    /// Out-of-range components leave the color unchanged, as Termux did.
++    fn directRgb(self: *Parser, comptime tag: Attribute.Tag, rgb: []const u16) Attribute {
++        if (rgb[0] > 255 or rgb[1] > 255 or rgb[2] > 255) {
++            return .{ .unknown = .{ .full = self.params, .partial = rgb } };
++        }
++        return @unionInit(Attribute, @tagName(tag), .{
++            .r = @intCast(rgb[0]),
++            .g = @intCast(rgb[1]),
++            .b = @intCast(rgb[2]),
++        });
++    }
++
+     /// Returns true if the present position has a colon separator.
+     /// This always returns false for the last value since it has no
+     /// separator.
+diff --git a/src/terminal/stream.zig b/src/terminal/stream.zig
+index 105cd1e4f..4b31a7be9 100644
+--- a/src/terminal/stream.zig
++++ b/src/terminal/stream.zig
+@@ -1122,7 +1122,7 @@ pub fn Stream(comptime H: type) type {
+                     // A parameter separator:
+                     ':', ';' => if (self.parser.params_idx < Parser.MAX_PARAMS) {
+                         self.parser.params[self.parser.params_idx] = self.parser.param_acc;
+-                        if (c == ':') self.parser.params_sep.set(self.parser.params_idx);
++                        if (c == ':' and self.parser.params_idx + 1 < Parser.MAX_PARAMS) self.parser.params_sep.set(self.parser.params_idx);
+                         self.parser.params_idx += 1;
+ 
+                         self.parser.param_acc = 0;
+@@ -1154,6 +1154,9 @@ pub fn Stream(comptime H: type) type {
+             // that causes weird behavior in some tests- I'm not sure if they
+             // miscompile or it's just very counter-intuitive comptime stuff,
+             // but regardless, this is the easy solution.
++            if (@hasDecl(T, "muxyByte")) {
++                if (self.handler.muxyByte(&self.parser, c)) return;
++            }
+             const actions = @call(.always_inline, Parser.next, .{ &self.parser, c });
+ 
+             for (actions) |action_opt| {
+diff --git a/src/terminal/stream_terminal.zig b/src/terminal/stream_terminal.zig
+index 91ad59be4..7ef510481 100644
+--- a/src/terminal/stream_terminal.zig
++++ b/src/terminal/stream_terminal.zig
+@@ -36,6 +36,7 @@ pub const Stream = stream.Stream(Handler);
+ pub const Handler = struct {
+     /// The terminal state to modify.
+     terminal: *Terminal,
++    muxy: @import("muxy_compat.zig").State = .{},
+ 
+     /// True after an error prevented a terminal-owned semantic update.
+     ///
+@@ -187,6 +188,20 @@ pub const Handler = struct {
+         };
+     };
+ 
++    pub fn vtRaw(self: *Handler, action: @import("Parser.zig").Action) !bool {
++        return self.muxy.raw(self.terminal, &self.dcs_handler, action) catch |err| {
++            self.semantic_failure = true;
++            return err;
++        };
++    }
++
++    pub fn muxyByte(self: *Handler, parser: *@import("Parser.zig"), c: u8) bool {
++        return self.muxy.byte(self.terminal, &self.dcs_handler, &self.apc_handler, parser, c) catch blk: {
++            self.semantic_failure = true;
++            break :blk false;
++        };
++    }
++
+     pub fn init(terminal: *Terminal) Handler {
+         return .{
+             .terminal = terminal,
+@@ -196,6 +211,7 @@ pub const Handler = struct {
+     pub fn deinit(self: *Handler) void {
+         self.apc_handler.deinit();
+         self.dcs_handler.deinit();
++        self.muxy.deinit(self.terminal.gpa());
+     }
+ 
+     /// Resize the terminal and apply any side effects (if supported)

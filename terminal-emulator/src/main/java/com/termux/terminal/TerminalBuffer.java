@@ -23,6 +23,45 @@ public final class TerminalBuffer {
 
 
     private TerminalSessionClient mClient;
+    private NativeTerminal mNative;
+    private boolean mNativeAlternate;
+    private final java.util.LinkedHashMap<Integer, TerminalRow> mSnapshots = new java.util.LinkedHashMap<>();
+
+    TerminalBuffer(TerminalSessionClient client, NativeTerminal nativeTerminal, int columns, int rows, int total, boolean alternate) {
+        mClient = client; mNative = nativeTerminal; mNativeAlternate = alternate;
+        mColumns = columns; mScreenRows = rows; mTotalRows = total;
+        mLines = new TerminalRow[rows];
+        mTerminalBitmaps = new HashMap<>();
+    }
+
+    void updateClient(TerminalSessionClient client) { mClient = client; }
+    void setHistorySize(int rows) { mActiveTranscriptRows = mNativeAlternate ? 0 : rows; }
+
+    void sync(int columns, int rows, int total) {
+        if (columns != mColumns || rows != mScreenRows) {
+            mColumns = columns; mScreenRows = rows; mLines = new TerminalRow[rows]; invalidate();
+        }
+        mTotalRows = total;
+    }
+
+    void invalidate() { mSnapshots.clear(); if (mNative != null) Arrays.fill(mLines, null); }
+
+    public TerminalRow getRow(int row) {
+        if (mNative == null) return allocateFullLineIfNecessary(externalToInternalRow(row));
+        TerminalRow cached = mSnapshots.get(row);
+        if (cached != null) return cached;
+        NativeTerminal.Row snapshot = mNative.readRow(row);
+        TerminalRow result = new TerminalRow(mColumns, 0);
+        result.load(snapshot);
+        if (mSnapshots.size() >= 256) mSnapshots.remove(mSnapshots.keySet().iterator().next());
+        mSnapshots.put(row, result);
+        if (row >= 0 && row < mScreenRows) mLines[row] = result;
+        return result;
+    }
+
+    public int snapColumn(int row, int column) {
+        return getRow(row).snapColumn(Math.max(0, Math.min(mColumns - 1, column)));
+    }
 
     TerminalRow[] mLines;
     /** The length of {@link #mLines}. */
@@ -138,9 +177,11 @@ public final class TerminalBuffer {
             } else {
                 x2 = columns;
             }
-            TerminalRow lineObject = mLines[externalToInternalRow(row)];
+            TerminalRow lineObject = getRow(row);
+            x1 = Math.max(0, Math.min(columns - 1, x1));
+            x2 = Math.max(x1 + 1, Math.min(columns, x2));
             int x1Index = lineObject.findStartOfColumn(x1);
-            int x2Index = (x2 < mColumns) ? lineObject.findStartOfColumn(x2) : lineObject.getSpaceUsed();
+            int x2Index = lineObject.getEndOfColumn(x2 - 1);
             if (x2Index == x1Index) {
                 // Selected the start of a wide character.
                 x2Index = lineObject.findStartOfColumn(x2 + 1);
@@ -171,50 +212,36 @@ public final class TerminalBuffer {
     }
 
     public String getWordAtLocation(int x, int y) {
-        // Set y1 and y2 to the lines where the wrapped line starts and ends.
-        // I.e. if a line that is wrapped to 3 lines starts at line 4, and this
-        // is called with y=5, then y1 would be set to 4 and y2 would be set to 6.
-        int y1 = y;
-        int y2 = y;
-        while (y1 > 0 && !getSelectedText(0, y1 - 1, mColumns, y, true, true).contains("\n")) {
-            y1--;
+        if (y < -getActiveTranscriptRows() || y >= mScreenRows || x < 0 || x >= mColumns) return "";
+        int first = y, last = y;
+        while (first > -getActiveTranscriptRows() && (getLineWrap(first - 1) || fullRow(first - 1))) first--;
+        while (last + 1 < mScreenRows && (getLineWrap(last) || fullRow(last))) last++;
+        StringBuilder text = new StringBuilder();
+        int offset = 0;
+        for (int row = first; row <= last; row++) {
+            TerminalRow line = getRow(row);
+            if (row == y) offset = text.length() + line.findStartOfColumn(x);
+            text.append(line.mText, 0, line.getSpaceUsed());
         }
-        while (y2 < mScreenRows && !getSelectedText(0, y, mColumns, y2 + 1, true, true).contains("\n")) {
-            y2++;
-        }
+        if (offset >= text.length() || Character.isWhitespace(text.charAt(offset))) return "";
+        int start = offset, end = offset;
+        while (start > 0 && !Character.isWhitespace(text.charAt(start - 1))) start--;
+        while (end < text.length() && !Character.isWhitespace(text.charAt(end))) end++;
+        return text.substring(start, end);
+    }
 
-        // Get the text for the whole wrapped line
-        String text = getSelectedText(0, y1, mColumns, y2, true, true);
-        // The index of x in text
-        int textOffset = (y - y1) * mColumns + x;
-
-        if (textOffset >= text.length()) {
-          // The click was to the right of the last word on the line, so
-          // there's no word to return
-          return "";
-        }
-
-        // Set x1 and x2 to the indices of the last space before x and the
-        // first space after x in text respectively
-        int x1 = text.lastIndexOf(' ', textOffset);
-        int x2 = text.indexOf(' ', textOffset);
-        if (x2 == -1) {
-            x2 = text.length();
-        }
-
-        if (x1 == x2) {
-          // The click was on a space, so there's no word to return
-          return "";
-        }
-        return text.substring(x1 + 1, x2);
+    private boolean fullRow(int row) {
+        TerminalRow line = getRow(row);
+        return line.getSpaceUsed() > 0 && line.mText[line.getSpaceUsed() - 1] != ' ';
     }
 
     public int getActiveTranscriptRows() {
+        if (mNative != null) return mNativeAlternate ? 0 : mActiveTranscriptRows;
         return mActiveTranscriptRows;
     }
 
     public int getActiveRows() {
-        return mActiveTranscriptRows + mScreenRows;
+        return getActiveTranscriptRows() + mScreenRows;
     }
 
     /**
@@ -239,6 +266,7 @@ public final class TerminalBuffer {
      * @return The row corresponding to the input argument in the private coordinate system.
      */
     public int externalToInternalRow(int externalRow) {
+        if (mNative != null) return externalRow;
         if (externalRow < -mActiveTranscriptRows || externalRow > mScreenRows)
             throw new IllegalArgumentException("extRow=" + externalRow + ", mScreenRows=" + mScreenRows + ", mActiveTranscriptRows=" + mActiveTranscriptRows);
         final int internalRow = mScreenFirstRow + externalRow;
@@ -250,7 +278,7 @@ public final class TerminalBuffer {
     }
 
     public boolean getLineWrap(int row) {
-        return mLines[externalToInternalRow(row)].mLineWrap;
+        return getRow(row).mLineWrap;
     }
 
     public void clearLineWrap(int row) {
@@ -447,6 +475,7 @@ public final class TerminalBuffer {
      * @param style        the style for the newly exposed line.
      */
     public void scrollDownOneLine(int topMargin, int bottomMargin, long style) {
+        if (mNative != null) { mNative.scroll(); invalidate(); return; }
         if (topMargin > bottomMargin - 1 || topMargin < 0 || bottomMargin > mScreenRows)
             throw new IllegalArgumentException("topMargin=" + topMargin + ", bottomMargin=" + bottomMargin + ", mScreenRows=" + mScreenRows);
 
@@ -518,18 +547,20 @@ public final class TerminalBuffer {
     }
 
     public TerminalRow allocateFullLineIfNecessary(int row) {
+        if (mNative != null) return getRow(row);
         return (mLines[row] == null) ? (mLines[row] = new TerminalRow(mColumns, 0)) : mLines[row];
     }
 
     public void setChar(int column, int row, int codePoint, long style) {
         if (row  < 0 || row >= mScreenRows || column < 0 || column >= mColumns)
             throw new IllegalArgumentException("TerminalBuffer.setChar(): row=" + row + ", column=" + column + ", mScreenRows=" + mScreenRows + ", mColumns=" + mColumns);
+        if (mNative != null) { mNative.setCell(column, row, codePoint, style); invalidate(); return; }
         row = externalToInternalRow(row);
         allocateFullLineIfNecessary(row).setChar(column, codePoint, style);
     }
 
     public long getStyleAt(int externalRow, int column) {
-        return allocateFullLineIfNecessary(externalToInternalRow(externalRow)).getStyle(column);
+        return getRow(externalRow).getStyle(column);
     }
 
     /** Support for http://vt100.net/docs/vt510-rm/DECCARA and http://vt100.net/docs/vt510-rm/DECCARA */
@@ -558,6 +589,13 @@ public final class TerminalBuffer {
     }
 
     public synchronized void clearTranscript() {
+        if (mNative != null) {
+            if (!mNativeAlternate) {
+                mNative.clearHistory();
+                mActiveTranscriptRows = 0;
+            }
+            invalidate(); clearTerminalBitmaps(); return;
+        }
         if (mScreenFirstRow < mActiveTranscriptRows) {
             Arrays.fill(mLines, mTotalRows + mScreenFirstRow - mActiveTranscriptRows, mTotalRows, null);
             Arrays.fill(mLines, 0, mScreenFirstRow, null);
@@ -743,6 +781,17 @@ public final class TerminalBuffer {
         }
 
         Set<Integer> bitmapsToKeep = new HashSet<>();
+        if (mNative != null) {
+            for (int row = -getActiveTranscriptRows(); row < mScreenRows; row++) {
+                TerminalRow snapshot = getRow(row);
+                if (snapshot.mHasTerminalBitmap) for (long style : snapshot.mStyle) {
+                    if (TextStyle.isTerminalBitmap(style)) bitmapsToKeep.add(TextStyle.getTerminalBitmapNum(style));
+                }
+            }
+            mTerminalBitmaps.keySet().retainAll(bitmapsToKeep);
+            mTerminalBitmapsLastGC = SystemClock.uptimeMillis();
+            return;
+        }
 
         for (int line = 0; line < mLines.length; line++) {
             if(mLines[line] != null && mLines[line].mHasTerminalBitmap) {

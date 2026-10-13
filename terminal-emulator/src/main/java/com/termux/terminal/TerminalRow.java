@@ -43,6 +43,36 @@ public final class TerminalRow {
     public char[] mText;
     /** The number of java chars used in {@link #mText}. */
     private int mSpaceUsed;
+    private int[] mNativeOffsets;
+    private byte[] mNativeOccupancy;
+
+    void load(NativeTerminal.Row row) {
+        mText = row.text;
+        mSpaceUsed = row.text.length;
+        mNativeOffsets = row.offsets;
+        mNativeOccupancy = row.occupancy;
+        System.arraycopy(row.styles, 0, mStyle, 0, mColumns);
+        mLineWrap = row.wrapped;
+        mHasNonOneWidthOrSurrogateChars = true;
+        mHasTerminalBitmap = false;
+        for (long style : mStyle) mHasTerminalBitmap |= TextStyle.isTerminalBitmap(style);
+    }
+
+    public int getCellWidth(int column) {
+        if (mNativeOccupancy != null) return mNativeOccupancy[column] == 1 ? 2 : mNativeOccupancy[column] == 2 ? 0 : 1;
+        return WcWidth.width(mText, findStartOfColumn(column));
+    }
+
+    public int getColumnEnd(int column) {
+        if (mNativeOccupancy != null && mNativeOccupancy[column] == 2) column--;
+        return Math.min(mColumns, column + getCellWidth(column));
+    }
+
+    public int getEndOfColumn(int column) { return findStartOfColumn(getColumnEnd(column)); }
+
+    public int snapColumn(int column) {
+        return mNativeOccupancy != null && column > 0 && column < mColumns && mNativeOccupancy[column] == 2 ? column - 1 : column;
+    }
     /** If this row has been line wrapped due to text output at the end of line. */
     boolean mLineWrap;
     /** The style bits of each cell in the row. See {@link TextStyle}. */
@@ -92,6 +122,8 @@ public final class TerminalRow {
 
     /** Note that the column may end of second half of wide character. */
     public int findStartOfColumn(int column) {
+        if (column < 0 || column > mColumns) throw new IndexOutOfBoundsException("Invalid terminal column");
+        if (mNativeOffsets != null) return mNativeOffsets[column];
         if (column == mColumns) return getSpaceUsed();
 
         int currentColumn = 0;

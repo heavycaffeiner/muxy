@@ -109,7 +109,14 @@ public abstract class TerminalTestCase extends TestCase {
 		mOutput = new MockTerminalOutput();
 	}
 
+    @Override
+    protected void tearDown() throws Exception {
+        if (mTerminal != null) mTerminal.close();
+        super.tearDown();
+    }
+
 	protected TerminalTestCase withTerminalSized(int columns, int rows) {
+        if (mTerminal != null) mTerminal.close();
 	    // The tests aren't currently using the client, so a null client will suffice, a dummy client should be implemented if needed
 		mTerminal = new TerminalEmulator(mOutput, columns, rows, INITIAL_CELL_WIDTH_PIXELS, INITIAL_CELL_HEIGHT_PIXELS, rows * 2, null);
 		return this;
@@ -143,7 +150,8 @@ public abstract class TerminalTestCase extends TestCase {
 
 	protected TerminalTestCase assertInvariants() {
 		TerminalBuffer screen = mTerminal.getScreen();
-		TerminalRow[] lines = screen.mLines;
+        TerminalRow[] lines = new TerminalRow[mTerminal.mRows];
+        for (int i = 0; i < lines.length; i++) lines[i] = screen.getRow(i);
 
 		Set<LineWrapper> linesSet = new HashSet<>();
 		for (int i = 0; i < lines.length; i++) {
@@ -151,7 +159,6 @@ public abstract class TerminalTestCase extends TestCase {
 			assertTrue("Line exists at multiple places: " + i, linesSet.add(new LineWrapper(lines[i])));
 			char[] text = lines[i].mText;
 			int usedChars = lines[i].getSpaceUsed();
-			int currentColumn = 0;
 			for (int j = 0; j < usedChars; j++) {
 				char c = text[j];
 				int codePoint;
@@ -163,13 +170,24 @@ public abstract class TerminalTestCase extends TestCase {
 					assertFalse("Low surrogate without preceding high surrogate", Character.isLowSurrogate(c));
 					codePoint = c;
 				}
-				assertFalse("Screen should never contain unassigned characters", Character.getType(codePoint) == Character.UNASSIGNED);
-				int width = WcWidth.width(codePoint);
-				assertFalse("The first column should not start with combining character", currentColumn == 0 && width < 0);
-				if (width > 0) currentColumn += width;
+				assertTrue("Invalid Unicode scalar", Character.isValidCodePoint(codePoint));
 			}
-			assertEquals("Line whose width does not match screens. line=" + new String(lines[i].mText, 0, lines[i].getSpaceUsed()),
-					screen.mColumns, currentColumn);
+            int currentColumn = 0;
+            int textOffset = 0;
+            while (currentColumn < screen.mColumns) {
+                int width = lines[i].getCellWidth(currentColumn);
+                assertTrue("Invalid leading cell width", width == 1 || width == 2);
+                assertEquals(textOffset, lines[i].findStartOfColumn(currentColumn));
+                if (width == 2) {
+                    assertTrue("Wide cell at right edge", currentColumn + 1 < screen.mColumns);
+                    assertEquals(0, lines[i].getCellWidth(currentColumn + 1));
+                    assertEquals(textOffset, lines[i].findStartOfColumn(currentColumn + 1));
+                }
+                textOffset = lines[i].getEndOfColumn(currentColumn);
+                currentColumn += width;
+            }
+            assertEquals(screen.mColumns, currentColumn);
+            assertEquals(usedChars, textOffset);
 		}
 
 		assertEquals("The alt buffer should have have no history", mTerminal.mAltBuffer.mTotalRows, mTerminal.mAltBuffer.mScreenRows);
@@ -211,12 +229,12 @@ public abstract class TerminalTestCase extends TestCase {
 
 	public TerminalTestCase assertLineWraps(boolean... lines) {
 		for (int i = 0; i < lines.length; i++)
-			assertEquals("line=" + i, lines[i], mTerminal.getScreen().mLines[mTerminal.getScreen().externalToInternalRow(i)].mLineWrap);
+			assertEquals("line=" + i, lines[i], mTerminal.getScreen().getRow(i).mLineWrap);
 		return this;
 	}
 
 	protected TerminalTestCase assertLineStartsWith(int line, int... codePoints) {
-		char[] chars = mTerminal.getScreen().mLines[mTerminal.getScreen().externalToInternalRow(line)].mText;
+		char[] chars = mTerminal.getScreen().getRow(line).mText;
 		int charIndex = 0;
 		for (int i = 0; i < codePoints.length; i++) {
 			int lineCodePoint = chars[charIndex++];
@@ -300,12 +318,12 @@ public abstract class TerminalTestCase extends TestCase {
 	}
 
 	public void assertForegroundColorAt(int externalRow, int column, int color) {
-		long style = mTerminal.getScreen().mLines[mTerminal.getScreen().externalToInternalRow(externalRow)].getStyle(column);
+		long style = mTerminal.getScreen().getRow(externalRow).getStyle(column);
 		assertEquals(color, TextStyle.decodeForeColor(style));
 	}
 
 	public void assertBackgroundColorAt(int externalRow, int column, int color) {
-		long style = mTerminal.getScreen().mLines[mTerminal.getScreen().externalToInternalRow(externalRow)].getStyle(column);
+		long style = mTerminal.getScreen().getRow(externalRow).getStyle(column);
 		assertEquals(color, TextStyle.decodeBackColor(style));
 	}
 

@@ -29,7 +29,10 @@ import android.view.ViewTreeObserver;
 import android.view.accessibility.AccessibilityManager;
 import android.view.autofill.AutofillManager;
 import android.view.autofill.AutofillValue;
-import android.view.inputmethod.BaseInputConnection;
+import android.view.inputmethod.CursorAnchorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.graphics.Matrix;
+import com.termux.terminal.NativeKeyMap;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.Scroller;
@@ -132,6 +135,79 @@ public final class TerminalView extends View {
     public final static int KEY_EVENT_SOURCE_SOFT_KEYBOARD = 0;
 
     private static final String LOG_TAG = "TerminalView";
+    private TerminalInputConnection mInputConnection;
+    private CompositionState mComposition = CompositionState.EMPTY;
+    private int mInputGeneration;
+    private boolean mCursorMonitor;
+
+    private void closeInput() {
+        mInputGeneration++;
+        if (mInputConnection != null) mInputConnection.closeConnection();
+        mInputConnection = null;
+        mComposition = CompositionState.EMPTY;
+        mCursorMonitor = false;
+    }
+
+    private int preeditShift() {
+        if (mEmulator == null || mComposition.isEmpty()) return 0;
+        int row = mEmulator.getInputCursorRow(), col = mEmulator.getInputCursorCol();
+        for (PreeditLayout.Cluster cluster : PreeditLayout.clusters(mComposition.text, mEmulator.isGraphemeMode())) {
+            if (cluster.cells > 0 && col + cluster.cells > mEmulator.mColumns) { row++; col = 0; }
+            col += cluster.cells;
+        }
+        return Math.max(0, row - mTopRow - mEmulator.mRows + 1);
+    }
+
+    private void updateImeAnchor() {
+        if (mInputConnection == null || mInputConnection.isBatchEditing() || mEmulator == null
+                || !hasFocus() || !isAttachedToWindow()) return;
+        InputMethodManager manager = (InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (manager == null) return;
+        CompositionState state = mComposition;
+        CompositionState editorState = mInputConnection.editorComposition();
+        int offset = editorState.text.length() - state.text.length();
+        CursorAnchorInfo.Builder builder = new CursorAnchorInfo.Builder();
+        Matrix matrix = new Matrix();
+        int[] location = new int[2];
+        getLocationOnScreen(location);
+        matrix.setTranslate(location[0], location[1]);
+        builder.setMatrix(matrix);
+        builder.setSelectionRange(editorState.selectionStart, editorState.selectionEnd);
+        if (!state.isEmpty()) builder.setComposingText(0, editorState.text);
+        int row = mEmulator.getInputCursorRow(), col = mEmulator.getInputCursorCol();
+        int caretRow = row, caretCol = col;
+        int shift = preeditShift();
+        for (PreeditLayout.Cluster cluster : PreeditLayout.clusters(state.text, mEmulator.isGraphemeMode())) {
+            if (cluster.cells > 0 && col + cluster.cells > mEmulator.mColumns) { row++; col = 0; }
+            float left = col * mRenderer.mFontWidth;
+            float top = mRenderer.mFontLineSpacingAndAscent + (row - mTopRow - shift) * mRenderer.mFontLineSpacing;
+            int flags = top >= 0 && top + mRenderer.mFontLineSpacing <= getHeight()
+                    ? CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION : CursorAnchorInfo.FLAG_HAS_INVISIBLE_REGION;
+            for (int i = cluster.startUtf16; i < cluster.startUtf16 + cluster.text.length(); i++) {
+                builder.addCharacterBounds(offset + i, left, top, left + cluster.cells * mRenderer.mFontWidth,
+                        top + mRenderer.mFontLineSpacing, flags);
+            }
+            if (cluster.startUtf16 <= state.selectionEnd) { caretRow = row; caretCol = col; }
+            col += cluster.cells;
+            if (cluster.startUtf16 + cluster.text.length() <= state.selectionEnd) { caretRow = row; caretCol = col; }
+        }
+        if (caretCol >= mEmulator.mColumns) { caretCol = 0; caretRow++; }
+        float y = mRenderer.mFontLineSpacingAndAscent + (caretRow - mTopRow - shift) * mRenderer.mFontLineSpacing;
+        boolean visible = y >= 0 && y + mRenderer.mFontLineSpacing <= getHeight();
+        builder.setInsertionMarkerLocation(caretCol * mRenderer.mFontWidth, y + mRenderer.mFontLineSpacing,
+                y, y + mRenderer.mFontLineSpacing, visible ? CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION : CursorAnchorInfo.FLAG_HAS_INVISIBLE_REGION);
+        manager.updateCursorAnchorInfo(this, builder.build());
+    }
+
+    @Override protected void onFocusChanged(boolean focused, int direction, android.graphics.Rect previous) {
+        super.onFocusChanged(focused, direction, previous);
+        if (!focused) { closeInput(); invalidate(); }
+        else {
+            InputMethodManager manager = (InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (manager != null) manager.restartInput(this);
+        }
+    }
+
 
     public TerminalView(Context context, AttributeSet attributes) { // NO_UCD (unused code)
         super(context, attributes);
@@ -290,6 +366,7 @@ public final class TerminalView extends View {
     public boolean attachSession(TerminalSession session) {
         if (session == mTermSession) return false;
 
+        closeInput();
         mTermSession = session;
         mEmulator = null;
         mCombiningAccent = 0;
@@ -307,134 +384,60 @@ public final class TerminalView extends View {
 
     @Override
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
-        // Ensure that inputType is only set if TerminalView is selected view with the keyboard and
-        // an alternate view is not selected, like an EditText. This is necessary if an activity is
-        // initially started with the alternate view or if activity is returned to from another app
-        // and the alternate view was the one selected the last time.
-        if (mClient.isTerminalViewSelected()) {
-            if (mClient.shouldEnforceCharBasedInput()) {
-                // Some keyboards seems do not reset the internal state on TYPE_NULL.
-                // Affects mostly Samsung stock keyboards.
-                // https://github.com/termux/termux-app/issues/686
-                // However, this is not a valid value as per AOSP since `InputType.TYPE_CLASS_*` is
-                // not set and it logs a warning:
-                // W/InputAttributes: Unexpected input class: inputType=0x00080090 imeOptions=0x02000000
-                // https://cs.android.com/android/platform/superproject/+/android-11.0.0_r40:packages/inputmethods/LatinIME/java/src/com/android/inputmethod/latin/InputAttributes.java;l=79
-                outAttrs.inputType = InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
-            } else {
-                // Using InputType.NULL is the most correct input type and avoids issues with other hacks.
-                //
-                // Previous keyboard issues:
-                // https://github.com/termux/termux-packages/issues/25
-                // https://github.com/termux/termux-app/issues/87.
-                // https://github.com/termux/termux-app/issues/126.
-                // https://github.com/termux/termux-app/issues/137 (japanese chars and TYPE_NULL).
-                outAttrs.inputType = InputType.TYPE_NULL;
-            }
-        } else {
-            // Corresponds to android:inputType="text"
-            outAttrs.inputType =  InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL;
-        }
-
-        // Note that IME_ACTION_NONE cannot be used as that makes it impossible to input newlines using the on-screen
-        // keyboard on Android TV (see https://github.com/termux/termux-app/issues/221).
-        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN;
-
-        return new BaseInputConnection(this, true) {
-
-            @Override
-            public boolean finishComposingText() {
-                if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) mClient.logInfo(LOG_TAG, "IME: finishComposingText()");
-                super.finishComposingText();
-
-                sendTextToTerminal(getEditable());
-                getEditable().clear();
-                return true;
-            }
-
-            @Override
-            public boolean commitText(CharSequence text, int newCursorPosition) {
-                if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
-                    mClient.logInfo(LOG_TAG, "IME: commitText(\"" + text + "\", " + newCursorPosition + ")");
-                }
-                super.commitText(text, newCursorPosition);
-
-                if (mEmulator == null) return true;
-
-                Editable content = getEditable();
-                sendTextToTerminal(content);
-                content.clear();
-                return true;
-            }
-
-            @Override
-            public boolean deleteSurroundingText(int leftLength, int rightLength) {
-                if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
-                    mClient.logInfo(LOG_TAG, "IME: deleteSurroundingText(" + leftLength + ", " + rightLength + ")");
-                }
-                // The stock Samsung keyboard with 'Auto check spelling' enabled sends leftLength > 1.
-                KeyEvent deleteKey = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL);
-                for (int i = 0; i < leftLength; i++) sendKeyEvent(deleteKey);
-                return super.deleteSurroundingText(leftLength, rightLength);
-            }
-
-            void sendTextToTerminal(CharSequence text) {
+        closeInput();
+        if (mEmulator == null || mEmulator.isClosed()) return null;
+        outAttrs.inputType = InputType.TYPE_CLASS_TEXT;
+        if (mClient.shouldEnforceCharBasedInput()) outAttrs.inputType |= InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
+        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN | EditorInfo.IME_FLAG_NO_EXTRACT_UI;
+        outAttrs.initialSelStart = outAttrs.initialSelEnd = 0;
+        final int generation = mInputGeneration;
+        final TerminalSession session = mTermSession;
+        final TerminalEmulator emulator = mEmulator;
+        mInputConnection = new TerminalInputConnection(this, new TerminalInputConnection.Sink() {
+            private boolean active() { return generation == mInputGeneration && session == mTermSession
+                    && emulator == mEmulator && emulator != null && !emulator.isClosed() && hasFocus(); }
+            @Override public void sendText(String text) {
+                if (!active()) return;
                 stopTextSelectionMode();
-                final int textLengthInChars = text.length();
-                for (int i = 0; i < textLengthInChars; i++) {
-                    char firstChar = text.charAt(i);
-                    int codePoint;
-                    if (Character.isHighSurrogate(firstChar)) {
-                        if (++i < textLengthInChars) {
-                            codePoint = Character.toCodePoint(firstChar, text.charAt(i));
-                        } else {
-                            // At end of string, with no low surrogate following the high:
-                            codePoint = TerminalEmulator.UNICODE_REPLACEMENT_CHAR;
-                        }
-                    } else {
-                        codePoint = firstChar;
-                    }
-
-                    // Check onKeyDown() for details.
-                    if (mClient.readShiftKey())
-                        codePoint = Character.toUpperCase(codePoint);
-
-                    boolean ctrlHeld = false;
-                    if (codePoint <= 31 && codePoint != 27) {
-                        if (codePoint == '\n') {
-                            // The AOSP keyboard and descendants seems to send \n as text when the enter key is pressed,
-                            // instead of a key event like most other keyboard apps. A terminal expects \r for the enter
-                            // key (although when icrnl is enabled this doesn't make a difference - run 'stty -icrnl' to
-                            // check the behaviour).
-                            codePoint = '\r';
-                        }
-
-                        // E.g. penti keyboard for ctrl input.
-                        ctrlHeld = true;
-                        switch (codePoint) {
-                            case 31:
-                                codePoint = '_';
-                                break;
-                            case 30:
-                                codePoint = '^';
-                                break;
-                            case 29:
-                                codePoint = ']';
-                                break;
-                            case 28:
-                                codePoint = '\\';
-                                break;
-                            default:
-                                codePoint += 96;
-                                break;
-                        }
-                    }
-
-                    inputCodePoint(KEY_EVENT_SOURCE_SOFT_KEYBOARD, codePoint, ctrlHeld, false);
+                for (int offset = 0; offset < text.length();) {
+                    int cp = text.codePointAt(offset);
+                    offset += Character.charCount(cp);
+                    if (mClient.readShiftKey()) cp = Character.toUpperCase(cp);
+                    boolean ctrl = cp <= 31 && cp != 27;
+                    if (ctrl) cp = cp == 31 ? '_' : cp == 30 ? '^' : cp == 29 ? ']' : cp == 28 ? '\\' : cp + 96;
+                    inputCodePoint(KEY_EVENT_SOURCE_SOFT_KEYBOARD, cp, ctrl, false);
                 }
             }
+            @Override public boolean sendKey(KeyEvent event, boolean composing) {
+                if (!active()) return false;
+                if (composing && !NativeKeyMap.isSpecial(event.getKeyCode())) {
+                    emulator.key(event.getKeyCode(), nativeMods(event), null,
+                            event.getAction() == KeyEvent.ACTION_UP ? 0 : 1, true, event.getUnicodeChar(0));
+                    return true;
+                }
+                return event.getAction() == KeyEvent.ACTION_UP ? dispatchKeyUp(event.getKeyCode(), event)
+                        : dispatchKeyDown(event.getKeyCode(), event);
+            }
+            @Override public void compositionChanged(CompositionState state) {
+                if (!active()) return;
+                mComposition = state;
+                if (!state.isEmpty()) stopTextSelectionMode();
+                invalidate(); updateImeAnchor();
+            }
+            @Override public void cursorUpdates(boolean immediate, boolean monitor) {
+                if (!active()) return;
+                mCursorMonitor = monitor;
+                if (immediate) updateImeAnchor();
+            }
+        });
+        return mInputConnection;
+    }
 
-        };
+    private int nativeMods(KeyEvent event) {
+        return (event.isShiftPressed() || mClient.readShiftKey() ? 1 : 0)
+                | (event.isCtrlPressed() || mClient.readControlKey() ? 2 : 0)
+                | ((event.getMetaState() & KeyEvent.META_ALT_LEFT_ON) != 0 || mClient.readAltKey() ? 4 : 0)
+                | (event.isMetaPressed() ? 8 : 0) | (event.isCapsLockOn() ? 16 : 0) | (event.isNumLockOn() ? 32 : 0);
     }
 
     @Override
@@ -497,6 +500,7 @@ public final class TerminalView extends View {
 
         invalidate();
         if (mAccessibilityEnabled) setContentDescription(getText());
+        if (mCursorMonitor) updateImeAnchor();
     }
 
     /** This must be called by the hosting activity in {@link Activity#onContextMenuClosed(Menu)}
@@ -768,6 +772,11 @@ public final class TerminalView extends View {
      */
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (mInputConnection != null && !mComposition.isEmpty()) return mInputConnection.sendKeyEvent(event);
+        return dispatchKeyDown(keyCode, event);
+    }
+
+    private boolean dispatchKeyDown(int keyCode, KeyEvent event) {
         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
             mClient.logInfo(LOG_TAG, "onKeyDown(keyCode=" + keyCode + ", isSystem()=" + event.isSystem() + ", event=" + event + ")");
         if (mEmulator == null) return true;
@@ -836,7 +845,10 @@ public final class TerminalView extends View {
                 if (combinedChar > 0) result = combinedChar;
                 mCombiningAccent = 0;
             }
-            inputCodePoint(event.getDeviceId(), result, controlDown, leftAltDown);
+            if (!mClient.onCodePoint(result, controlDown, mTermSession)) {
+                mEmulator.key(keyCode, nativeMods(event), new String(Character.toChars(result)),
+                        event.getRepeatCount() > 0 ? 2 : 1, false, event.getUnicodeChar(0));
+            }
         }
 
         if (mCombiningAccent != oldCombiningAccent) invalidate();
@@ -861,30 +873,6 @@ public final class TerminalView extends View {
 
         if (mClient.onCodePoint(codePoint, controlDown, mTermSession)) return;
 
-        if (controlDown) {
-            if (codePoint >= 'a' && codePoint <= 'z') {
-                codePoint = codePoint - 'a' + 1;
-            } else if (codePoint >= 'A' && codePoint <= 'Z') {
-                codePoint = codePoint - 'A' + 1;
-            } else if (codePoint == ' ' || codePoint == '2') {
-                codePoint = 0;
-            } else if (codePoint == '[' || codePoint == '3') {
-                codePoint = 27; // ^[ (Esc)
-            } else if (codePoint == '\\' || codePoint == '4') {
-                codePoint = 28;
-            } else if (codePoint == ']' || codePoint == '5') {
-                codePoint = 29;
-            } else if (codePoint == '^' || codePoint == '6') {
-                codePoint = 30; // control-^
-            } else if (codePoint == '_' || codePoint == '7' || codePoint == '/') {
-                // "Ctrl-/ sends 0x1f which is equivalent of Ctrl-_ since the days of VT102"
-                // - http://apple.stackexchange.com/questions/24261/how-do-i-send-c-that-is-control-slash-to-the-terminal
-                codePoint = 31;
-            } else if (codePoint == '8') {
-                codePoint = 127; // DEL
-            }
-        }
-
         if (codePoint > -1) {
             // If not virtual or soft keyboard.
             if (eventSource > KEY_EVENT_SOURCE_SOFT_KEYBOARD) {
@@ -905,7 +893,8 @@ public final class TerminalView extends View {
             }
 
             // If left alt, send escape before the code point to make e.g. Alt+B and Alt+F work in readline:
-            mTermSession.writeCodePoint(altDown, codePoint);
+            mEmulator.key(KeyEvent.KEYCODE_UNKNOWN, (controlDown ? 2 : 0) | (altDown ? 4 : 0),
+                    new String(Character.toChars(codePoint)), 1, false, Character.toLowerCase(codePoint));
         }
     }
 
@@ -919,9 +908,13 @@ public final class TerminalView extends View {
             return true;
 
         TerminalEmulator term = mTermSession.getEmulator();
-        String code = KeyHandler.getCode(keyCode, keyMod, term.isCursorKeysApplicationMode(), term.isKeypadApplicationMode());
-        if (code == null) return false;
-        mTermSession.write(code);
+        if (!NativeKeyMap.isSpecial(keyCode)) return false;
+        if (mInputConnection != null && mInputConnection.terminalKey(keyCode)) return true;
+        int mods = ((keyMod & KeyHandler.KEYMOD_SHIFT) != 0 ? 1 : 0)
+                | ((keyMod & KeyHandler.KEYMOD_CTRL) != 0 ? 2 : 0)
+                | ((keyMod & KeyHandler.KEYMOD_ALT) != 0 ? 4 : 0)
+                | ((keyMod & KeyHandler.KEYMOD_NUM_LOCK) != 0 ? 32 : 0);
+        term.key(keyCode, mods, null, 1, false, 0);
         return true;
     }
 
@@ -954,6 +947,11 @@ public final class TerminalView extends View {
      */
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (mInputConnection != null) return mInputConnection.sendKeyEvent(event);
+        return dispatchKeyUp(keyCode, event);
+    }
+
+    private boolean dispatchKeyUp(int keyCode, KeyEvent event) {
         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
             mClient.logInfo(LOG_TAG, "onKeyUp(keyCode=" + keyCode + ", event=" + event + ")");
 
@@ -969,6 +967,7 @@ public final class TerminalView extends View {
             return super.onKeyUp(keyCode, event);
         }
 
+        if (mEmulator != null) mEmulator.key(keyCode, nativeMods(event), null, 0, false, event.getUnicodeChar(0));
         return true;
     }
 
@@ -993,7 +992,15 @@ public final class TerminalView extends View {
 
         if (mEmulator == null || (newColumns != mEmulator.mColumns || newRows != mEmulator.mRows)) {
             mTermSession.updateSize(newColumns, newRows, (int) mRenderer.getFontWidth(), mRenderer.getFontLineSpacing());
-            mEmulator = mTermSession.getEmulator();
+            TerminalEmulator emulator = mTermSession.getEmulator();
+            if (emulator != mEmulator) {
+                closeInput();
+                mEmulator = emulator;
+                if (hasFocus()) {
+                    InputMethodManager manager = (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if (manager != null) manager.restartInput(this);
+                }
+            }
             mClient.onEmulatorSet();
 
             // Update mTerminalCursorBlinkerRunnable inner class mEmulator on session change
@@ -1029,7 +1036,12 @@ public final class TerminalView extends View {
                 mTextSelectionCursorController.getSelectors(sel);
             }
 
+            canvas.save();
+            canvas.translate(0, -preeditShift() * mRenderer.mFontLineSpacing);
             mRenderer.render(mEmulator, canvas, mTopRow, sel[0], sel[1], sel[2], sel[3]);
+            mRenderer.renderPreedit(mEmulator, canvas, mTopRow, mComposition);
+            canvas.restore();
+            if (mCursorMonitor) updateImeAnchor();
 
             // render the text selection handles
             renderTextSelection();
@@ -1049,7 +1061,7 @@ public final class TerminalView extends View {
     }
 
     public int getCursorY(float y) {
-        return (int) (((y - 40) / mRenderer.mFontLineSpacing) + mTopRow);
+        return (int) ((y - mRenderer.mFontLineSpacingAndAscent) / mRenderer.mFontLineSpacing) + mTopRow + preeditShift();
     }
 
     public int getPointX(int cx) {
@@ -1461,6 +1473,7 @@ public final class TerminalView extends View {
 
     @Override
     protected void onDetachedFromWindow() {
+        closeInput();
         super.onDetachedFromWindow();
 
         if (mTextSelectionCursorController != null) {

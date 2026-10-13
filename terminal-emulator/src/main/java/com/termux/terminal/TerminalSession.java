@@ -36,6 +36,21 @@ public final class TerminalSession extends TerminalOutput {
     public final String mHandle = UUID.randomUUID().toString();
 
     TerminalEmulator mEmulator;
+    private boolean mDisposed;
+
+    public void dispose() {
+        if (Thread.currentThread() != mMainThreadHandler.getLooper().getThread()) {
+            mMainThreadHandler.post(this::dispose);
+            return;
+        }
+        if (mDisposed) return;
+        finishIfRunning();
+        mDisposed = true;
+        mMainThreadHandler.removeMessages(MSG_NEW_INPUT);
+        mProcessToTerminalIOQueue.close();
+        mTerminalToProcessIOQueue.close();
+        if (mEmulator != null) mEmulator.close();
+    }
 
     /**
      * A queue written to from a separate thread when the process outputs, and read by main thread to process by
@@ -63,7 +78,7 @@ public final class TerminalSession extends TerminalOutput {
      * The file descriptor referencing the master half of a pseudo-terminal pair, resulting from calling
      * {@link JNI#createSubprocess(String, String, String[], String[], int[], int, int, int, int)}.
      */
-    private int mTerminalFileDescriptor;
+    private int mTerminalFileDescriptor = -1;
 
     /** Set by the application for user identification of session, not by terminal. */
     public String mSessionName;
@@ -101,6 +116,7 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Inform the attached pty of the new size and reflow or initialize the emulator. */
     public void updateSize(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
+        if (mDisposed) throw new IllegalStateException("Session is disposed");
         if (mEmulator == null) {
             initializeEmulator(columns, rows, cellWidthPixels, cellHeightPixels);
         } else {
@@ -129,11 +145,29 @@ public final class TerminalSession extends TerminalOutput {
         mClient.setTerminalShellPid(this, mShellPid);
 
         final FileDescriptor terminalFileDescriptorWrapped = wrapFileDescriptor(mTerminalFileDescriptor, mClient);
+        final FileDescriptor inputDescriptor;
+        final FileDescriptor outputDescriptor;
+        final int processPid = mShellPid;
+        try {
+            inputDescriptor = Os.dup(terminalFileDescriptorWrapped);
+            try {
+                outputDescriptor = Os.dup(terminalFileDescriptorWrapped);
+            } catch (ErrnoException error) {
+                try { Os.close(inputDescriptor); } catch (ErrnoException closeError) { error.addSuppressed(closeError); }
+                throw error;
+            }
+        } catch (ErrnoException error) {
+            finishIfRunning();
+            JNI.waitFor(processPid);
+            cleanupResources(-OsConstants.SIGKILL);
+            mEmulator.close();
+            throw new IllegalStateException("Cannot duplicate terminal descriptor", error);
+        }
 
         new Thread("TermSessionInputReader[pid=" + mShellPid + "]") {
             @Override
             public void run() {
-                try (InputStream termIn = new FileInputStream(terminalFileDescriptorWrapped)) {
+                try (InputStream termIn = new FileInputStream(inputDescriptor)) {
                     final byte[] buffer = new byte[4096];
                     while (true) {
                         int read = termIn.read(buffer);
@@ -151,7 +185,7 @@ public final class TerminalSession extends TerminalOutput {
             @Override
             public void run() {
                 final byte[] buffer = new byte[4096];
-                try (FileOutputStream termOut = new FileOutputStream(terminalFileDescriptorWrapped)) {
+                try (FileOutputStream termOut = new FileOutputStream(outputDescriptor)) {
                     while (true) {
                         int bytesToWrite = mTerminalToProcessIOQueue.read(buffer, true);
                         if (bytesToWrite == -1) return;
@@ -166,7 +200,7 @@ public final class TerminalSession extends TerminalOutput {
         new Thread("TermSessionWaiter[pid=" + mShellPid + "]") {
             @Override
             public void run() {
-                int processExitCode = JNI.waitFor(mShellPid);
+                int processExitCode = JNI.waitFor(processPid);
                 mMainThreadHandler.sendMessage(mMainThreadHandler.obtainMessage(MSG_PROCESS_EXITED, processExitCode));
             }
         }.start();
@@ -233,7 +267,7 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Finish this terminal session by sending SIGKILL to the shell. */
     public void finishIfRunning() {
-        if (isRunning()) {
+        if (mShellPid > 0) {
             try {
                 Os.kill(mShellPid, OsConstants.SIGKILL);
             } catch (ErrnoException e) {
@@ -252,7 +286,10 @@ public final class TerminalSession extends TerminalOutput {
         // Stop the reader and writer threads, and close the I/O streams
         mTerminalToProcessIOQueue.close();
         mProcessToTerminalIOQueue.close();
-        JNI.close(mTerminalFileDescriptor);
+        if (mTerminalFileDescriptor >= 0) {
+            JNI.close(mTerminalFileDescriptor);
+            mTerminalFileDescriptor = -1;
+        }
     }
 
     @Override
@@ -340,6 +377,10 @@ public final class TerminalSession extends TerminalOutput {
 
         @Override
         public void handleMessage(Message msg) {
+            if (mDisposed) {
+                if (msg.what == MSG_PROCESS_EXITED) cleanupResources((Integer) msg.obj);
+                return;
+            }
             int bytesRead = mProcessToTerminalIOQueue.read(mReceiveBuffer, false);
             if (bytesRead > 0) {
                 mEmulator.append(mReceiveBuffer, bytesRead);

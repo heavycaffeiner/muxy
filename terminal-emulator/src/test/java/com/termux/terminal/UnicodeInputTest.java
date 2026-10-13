@@ -5,7 +5,7 @@ import java.io.UnsupportedEncodingException;
 public class UnicodeInputTest extends TerminalTestCase {
 
 	public void testIllFormedUtf8SuccessorByteNotConsumed() throws Exception {
-		// The Unicode Standard Version 6.2 – Core Specification (http://www.unicode.org/versions/Unicode6.2.0/ch03.pdf):
+		// The Unicode Standard Version 6.2 Core Specification (http://www.unicode.org/versions/Unicode6.2.0/ch03.pdf):
 		// "If the converter encounters an ill-formed UTF-8 code unit sequence which starts with a valid first byte, but which does not
 		// continue with valid successor bytes (see Table 3-7), it must not consume the successor bytes as part of the ill-formed
 		// subsequence whenever those successor bytes themselves constitute part of a well-formed UTF-8 code unit subsequence."
@@ -28,7 +28,7 @@ public class UnicodeInputTest extends TerminalTestCase {
 		assertLinesAre("a\uFFFD\uFFFD\uFFFDb\uFFFDc\uFFFD\uFFFDd", "          ");
 
 		// Surrogate pairs.
-		withTerminalSized(5, 2);
+		withTerminalSized(13, 2);
 		input = new byte[]{
 				(byte) 0xed, (byte) 0xa0,
 				(byte) 0x80, (byte) 0xed,
@@ -38,7 +38,8 @@ public class UnicodeInputTest extends TerminalTestCase {
 				(byte) 0xbf, (byte) 0xbf
 		};
 		mTerminal.append(input, input.length);
-		assertLinesAre("\uFFFD\uFFFD\uFFFD\uFFFD ", "     ");
+        // Each byte of an encoded surrogate is an invalid UTF-8 subpart.
+        assertLinesAre("\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD ", "             ");
 
 		// https://bugzilla.mozilla.org/show_bug.cgi?id=746900: "with this patch 0xe0 0x80 is decoded as two U+FFFDs,
 		// but 0xe0 0xa0 is decoded as a single U+FFFD, and this is correct according to the "Best Practices", but IE
@@ -55,14 +56,13 @@ public class UnicodeInputTest extends TerminalTestCase {
 		// assertLinesAre("\uFFFD\uFFFDa  ", "     ");
 	}
 
-	public void testUnassignedCodePoint() throws UnsupportedEncodingException {
+	public void testUnassignedCodePointIsPreserved() throws UnsupportedEncodingException {
 		withTerminalSized(3, 3);
 		// UTF-8 for U+C2541, an unassigned code point:
 		byte[] b = new byte[]{(byte) 0xf3, (byte) 0x82, (byte) 0x95, (byte) 0x81};
 		mTerminal.append(b, b.length);
 		enterString("Y");
-		assertEquals(1, Character.charCount(TerminalEmulator.UNICODE_REPLACEMENT_CHAR));
-		assertLineStartsWith(0, TerminalEmulator.UNICODE_REPLACEMENT_CHAR, (int) 'Y', ' ');
+        assertLineStartsWith(0, 0xc2541, (int) 'Y', ' ');
 	}
 
 	public void testStuff() {
@@ -119,10 +119,9 @@ public class UnicodeInputTest extends TerminalTestCase {
 	}
 
 	public void testOverlongUtf8Encoding() throws Exception {
-		// U+0020 should be encoded as 0x20, 0xc0 0xa0 is an overlong encoding
-		// so should be replaced with the replacement char U+FFFD.
+        // C0 and the following continuation byte are separate invalid subparts.
 		withTerminalSized(5, 5).mTerminal.append(new byte[]{(byte) 0xc0, (byte) 0xa0, 'Y'}, 3);
-		assertLineIs(0, "\uFFFDY   ");
+		assertLineIs(0, "\uFFFD\uFFFDY  ");
 	}
 
 	public void testWideCharacterWithoutWrapping() throws Exception {
