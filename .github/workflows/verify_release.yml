@@ -3,6 +3,11 @@ name: Verify Release APKs
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
 
 permissions:
   contents: read
@@ -13,13 +18,13 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
       EXPECTED_SIGNER_SHA256: 756768af514d3fa0d1c214d54dabd7b0cd088a1723a22f520b90e8e8545262ce
     steps:
       - name: Check out release source
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -30,7 +35,8 @@ jobs:
       - name: Install APK verification tools
         run: |
           NDK_VERSION="$(awk -F= '$1 == "ndkVersion" {print $2}' gradle.properties)"
-          sdkmanager 'build-tools;36.0.0' "ndk;$NDK_VERSION"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;36.0.0' "ndk;$NDK_VERSION"
 
       - name: Download and verify published artifacts
         run: |
