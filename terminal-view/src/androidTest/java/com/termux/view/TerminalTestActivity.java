@@ -20,6 +20,7 @@ public class TerminalTestActivity extends Activity implements TerminalViewClient
     public TerminalSession session;
     public File capture;
     public final List<String> errors = new ArrayList<>();
+    public int singleTapRequests;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -61,6 +62,7 @@ public class TerminalTestActivity extends Activity implements TerminalViewClient
     @Override public Integer getTerminalCursorStyle() { return 0; }
     @Override public float onScale(float scale) { return scale; }
     @Override public void onSingleTapUp(MotionEvent event) {
+        singleTapRequests++;
         InputMethodManager manager = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
         if (manager != null) manager.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT);
     }

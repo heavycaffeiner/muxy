@@ -128,6 +128,31 @@ public class TerminalViewIntegrationTest {
         assertCaptured(expected);
     }
 
+    @Test public void alternateScreenMouseReportingStillDeliversTheTouchscreenTapCallback() throws Exception {
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            byte[] modes = "\033[?1049h\033[?1000h\033[?1006h".getBytes(StandardCharsets.UTF_8);
+            TerminalEmulator emulator = activity.session.getEmulator();
+            emulator.append(modes, modes.length);
+            assertTrue(emulator.isAlternateBufferActive());
+            assertTrue(emulator.isMouseTrackingActive());
+            long time = android.os.SystemClock.uptimeMillis();
+            for (int action : new int[]{android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP}) {
+                android.view.MotionEvent tap = android.view.MotionEvent.obtain(time, time + action * 30,
+                        action, 10, 10, 0);
+                tap.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+                try { assertTrue(activity.view.onTouchEvent(tap)); } finally { tap.recycle(); }
+            }
+        });
+        await(() -> {
+            AtomicBoolean called = new AtomicBoolean();
+            scenario.onActivity(activity -> called.set(activity.singleTapRequests == 1));
+            return called.get();
+        });
+        scenario.onActivity(activity -> enter());
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
+    }
+
     @Test public void physicalShiftBetweenTheVowelAndDoubleFinalPreservesBetaReplacement() throws Exception {
         org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 34);
         prepareCapture();

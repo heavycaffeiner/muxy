@@ -12,6 +12,8 @@ import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
+import android.accessibilityservice.AccessibilityServiceInfo;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -58,6 +60,30 @@ public class PublishedApkSmokeTest {
             if (line.matcher(observed).find()) return;
             if (System.nanoTime() >= deadline) fail("Missing signed-app output: " + expected + "; observed: " + observed);
             Thread.sleep(100);
+        }
+    }
+
+    private boolean keyboardVisible() {
+        for (AccessibilityWindowInfo window : automation.getWindows()) {
+            if (window.getType() == AccessibilityWindowInfo.TYPE_INPUT_METHOD) return true;
+        }
+        return false;
+    }
+
+    private void awaitKeyboard(boolean visible) throws InterruptedException {
+        long deadline = System.nanoTime() + 10_000_000_000L;
+        while (keyboardVisible() != visible) {
+            if (System.nanoTime() >= deadline) fail("Keyboard visibility did not become " + visible);
+            Thread.sleep(100);
+        }
+    }
+
+    private void tap(float x, float y, int source) {
+        long time = SystemClock.uptimeMillis();
+        for (int action : new int[]{MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+            MotionEvent event = MotionEvent.obtain(time, SystemClock.uptimeMillis(), action, x, y, 0);
+            event.setSource(source);
+            try { assertTrue(automation.injectInputEvent(event, true)); } finally { event.recycle(); }
         }
     }
 
@@ -129,6 +155,37 @@ public class PublishedApkSmokeTest {
 
     @After public void restoreRotation() {
         if (automation != null) automation.setRotation(UiAutomation.ROTATION_UNFREEZE);
+    }
+
+    @Test public void alternateScreenTouchReopensTheKeyboardWhileMouseInputRemainsEnabled() throws Exception {
+        AccessibilityServiceInfo info = automation.getServiceInfo();
+        int previousFlags = info.flags;
+        info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+        automation.setServiceInfo(info);
+        try {
+            for (int mode : new int[]{0, 1000, 1002, 1003}) {
+                String enableMouse = mode == 0 ? "" : "\\033[?" + mode + "h\\033[?1006h";
+                String ready = "ALT_KEYBOARD_READY_" + mode;
+                type("printf '\\033[?1049h" + enableMouse + ready + "\\r\\n'; "
+                        + "IFS= read -r value; printf '\\033[?1000l\\033[?1002l\\033[?1003l\\033[?1006l\\033[?1049l'");
+                enter();
+                await(ready);
+                awaitKeyboard(true);
+                key(KeyEvent.KEYCODE_BACK);
+                awaitKeyboard(false);
+                tap(100, 300, InputDevice.SOURCE_MOUSE);
+                Thread.sleep(500);
+                assertFalse("A physical mouse tap opened the keyboard in mode " + mode, keyboardVisible());
+                tap(100, 300, InputDevice.SOURCE_TOUCHSCREEN);
+                awaitKeyboard(true);
+                enter();
+                await("$");
+                assertTrue("Exiting alternate screen lost keyboard access in mode " + mode, keyboardVisible());
+            }
+        } finally {
+            info.flags = previousFlags;
+            automation.setServiceInfo(info);
+        }
     }
 
     @Test public void liveGboardTypingOnTheSignedApp() throws Exception {
