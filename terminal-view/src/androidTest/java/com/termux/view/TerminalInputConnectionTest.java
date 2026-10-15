@@ -332,6 +332,49 @@ public class TerminalInputConnectionTest {
         });
     }
 
+    @Test public void emptyEditorDeletionKeepsAllImeOffsetsAlignedAndStillForwardsEveryKey() {
+        onMain(() -> {
+            connection.commitText("12345", 1);
+            connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
+            events.clear();
+            for (int i = 0; i < 8; i++) {
+                assertTrue(connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL)));
+                assertTrue(connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL)));
+                assertEquals(Math.max(0, 4 - i), connection.documentOffset());
+                assertEquals("", connection.getTextBeforeCursor(100, 0));
+            }
+            assertEquals(16, events.size());
+            assertEquals(0, connection.getExtractedText(null, 0).startOffset);
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                assertEquals(0, connection.takeSnapshot().getSurroundingText().getOffset());
+            }
+            connection.commitText("ㅇ", 1);
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                assertTrue(connection.replaceText(0, 1, "아", 1, null));
+                assertTrue(connection.replaceText(0, 1, "안", 1, null));
+            }
+        });
+    }
+
+    @Test public void directAndSurroundingDeletesMoveAnEmptyEditorOriginWithoutUnderflow() {
+        onMain(() -> {
+            connection.commitText("12345", 1);
+            connection.terminalKey(KeyEvent.KEYCODE_ENTER);
+            assertEquals(5, connection.documentOffset());
+            assertFalse(connection.terminalKey(KeyEvent.KEYCODE_DEL));
+            assertEquals(4, connection.documentOffset());
+            assertTrue(connection.deleteSurroundingText(2, 0));
+            assertEquals(2, connection.documentOffset());
+            assertTrue(connection.deleteSurroundingTextInCodePoints(5, 0));
+            assertEquals(0, connection.documentOffset());
+            assertEquals("", connection.editorComposition().text);
+            connection.setComposingText("한", 1);
+            connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL));
+            assertEquals(0, connection.documentOffset());
+            assertTrue(connection.composition().isEmpty());
+        });
+    }
+
     @Test public void cursorUpdatesRejectUnknownFlags() {
         onMain(() -> {
             assertFalse(connection.requestCursorUpdates(1 << 20));

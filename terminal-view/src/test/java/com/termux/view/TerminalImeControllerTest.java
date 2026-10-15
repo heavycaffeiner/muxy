@@ -358,6 +358,37 @@ public class TerminalImeControllerTest {
         assertEquals("한", terminal.toString());
     }
 
+    @Test public void emptyEditorBackspaceMovesTheAbsoluteCaretWithoutRestoringSubmittedText() {
+        ime.commitText("submitted");
+        ime.terminalKeySent(KeyEvent.KEYCODE_ENTER);
+        assertEquals(9, ime.documentOffset());
+        for (int i = 0; i < 12; i++) {
+            ime.terminalKeySent(KeyEvent.KEYCODE_DEL);
+            assertEquals(Math.max(0, 8 - i), ime.documentOffset());
+            assertEquals("", ime.editorComposition().text);
+            assertEquals(-1, ime.composingStart());
+        }
+        assertFalse(ime.replaceText(1, 9, "stale", 1));
+        ime.commitText("ㅇ");
+        assertTrue(ime.replaceText(0, 1, "아", 1));
+        assertTrue(ime.replaceText(0, 1, "안", 1));
+        assertEquals("submitted안", terminal.toString());
+    }
+
+    @Test public void backspaceConsumesRetainedTextBeforeMovingTheDocumentOrigin() {
+        ime.commitText("old");
+        ime.terminalKeySent(KeyEvent.KEYCODE_DPAD_LEFT);
+        ime.commitText("ab");
+        ime.terminalKeySent(KeyEvent.KEYCODE_DEL);
+        assertEquals(3, ime.documentOffset());
+        assertEquals("a", ime.editorComposition().text);
+        ime.terminalKeySent(KeyEvent.KEYCODE_DEL);
+        assertEquals(3, ime.documentOffset());
+        ime.terminalKeySent(KeyEvent.KEYCODE_DEL);
+        assertEquals(2, ime.documentOffset());
+        assertEquals("", ime.editorComposition().text);
+    }
+
     @Test public void terminalDeletionCountIsBounded() {
         assertEquals(64, ime.terminalDeletes(Integer.MAX_VALUE));
         assertEquals(0, ime.terminalDeletes(-1));

@@ -24,6 +24,22 @@ Legacy `setComposingText` remains supported. Settled Hangul syllables are releas
 
 Android can call `onCreateInputConnection` and discard its result while retaining an earlier connection. New connection wrappers share the editor session without closing the served wrapper. An explicit terminal session reset invalidates all wrappers. Closed wrappers reject callbacks.
 
+## Backspace beyond an empty editor
+
+A submitted line or navigation can leave an empty editor document with a positive absolute origin. Gboard moves its cached caret left when it sends Backspace even if the PTY application has no text left to erase. The controller kept reporting the previous origin. On Gboard `18.4.1.985164140-release-arm64-v8a`, submitting 18 spaces and then tapping Backspace eight times reproduced split Hangul on the next word.
+
+Backspace now decrements a positive document origin after all retained committed/released text is gone. It stops at zero. Every terminal Backspace is still forwarded, and submitted text is never restored as editable context. Extracted text, snapshots, and cursor notifications keep using the same origin. No IME restart or Unicode normalization is added.
+
+Verification for this correction:
+
+- The reproduction fails before the change and passes afterward with actual Gboard 18.4.1 on API 35.
+- Live tests submit context, then send eight or 30 touch Backspaces before typing `안녕`. All four combinations of ordinary/alternate screen and eight/30 deletions pass real PTY byte assertions. Thirty deletions also exercise the zero floor.
+- Controller and connection regressions cover key events, direct extra-key dispatch, UTF-16/codepoint surrounding deletion, retained-text-first deletion, unchanged terminal key counts, origin bounds, snapshots, and subsequent Hangul replacement.
+- Android connection/View/pointer suites complete 52 scenarios each on API 21 x86, API 34 x86_64, and API 35 x86_64 without failures. API 21 skips 12 scenarios; API 34/35 skip the optional live-input scenario. Some newer-API assertions return early on older Android.
+- Debug and release host checks pass 159 emulator, 51 terminal-view, and eight app tests per build type. Debug APK build and terminal-view lint pass.
+
+The manual test accepts `gboardSubmittedContext=true` and `gboardAlternateScreen=true` in addition to `gboardExpected`. The alternate-screen PTY capture uses canonical line discipline, not a specific editor or TUI application. Physical devices and other live IMEs remain unverified for this correction.
+
 ## Repeated deletion and navigation follow-up
 
 The editor could retain `releasedText` after `finishComposingText` and terminal Backspace. Later replacement ranges then referred to characters that no longer existed at the PTY. Backspace now removes the released suffix before the ordinary committed suffix. Deletion also clears the pending flush echo guard, so retyping the same syllable is not suppressed.

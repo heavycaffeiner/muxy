@@ -118,7 +118,13 @@ public class TerminalViewIntegrationTest {
     @Test public void liveGboardTypingReachesThePty() throws Exception {
         String expected = InstrumentationRegistry.getArguments().getString("gboardExpected");
         org.junit.Assume.assumeNotNull(expected);
+        if ("true".equals(InstrumentationRegistry.getArguments().getString("gboardSubmittedContext"))) {
+            scenario.onActivity(activity -> { input.commitText("                  ", 1); enter(); });
+        }
+        boolean alternate = "true".equals(InstrumentationRegistry.getArguments().getString("gboardAlternateScreen"));
+        if (alternate) write("printf '\\033[?1049h'\r");
         prepareCapture();
+        if (alternate) scenario.onActivity(activity -> assertTrue(activity.session.getEmulator().isAlternateBufferActive()));
         scenario.onActivity(activity -> {
             android.view.inputmethod.InputMethodManager manager = (android.view.inputmethod.InputMethodManager)
                     activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
@@ -336,6 +342,37 @@ public class TerminalViewIntegrationTest {
             enter();
         });
         assertCaptured("한글\033[D안");
+    }
+
+    private void assertExcessBackspacePreservesHangul(boolean alternate) throws Exception {
+        org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 34);
+        scenario.onActivity(activity -> { input.commitText("   ", 1); enter(); });
+        if (alternate) write("printf '\\033[?1049h'\r");
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            assertEquals(alternate, activity.session.getEmulator().isAlternateBufferActive());
+            TerminalInputConnection connection = (TerminalInputConnection) input;
+            assertEquals(3, connection.documentOffset());
+            for (int i = 0; i < 8; i++) {
+                assertTrue(input.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL)));
+                input.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL));
+            }
+            assertEquals(0, connection.documentOffset());
+            assertEquals("", input.getTextBeforeCursor(100, 0));
+            input.commitText("ㅇ", 1);
+            assertTrue(input.replaceText(0, 1, "아", 1, null));
+            assertTrue(input.replaceText(0, 1, "안", 1, null));
+            enter();
+        });
+        assertCaptured("안");
+    }
+
+    @Test public void emptyPromptBackspacesPreserveTheNextHangulSyllable() throws Exception {
+        assertExcessBackspacePreservesHangul(false);
+    }
+
+    @Test public void alternateScreenBackspacesPreserveTheNextHangulSyllable() throws Exception {
+        assertExcessBackspacePreservesHangul(true);
     }
 
     @Test public void editorAlwaysUsesTextInputWithoutLegacyPasswordFlags() {

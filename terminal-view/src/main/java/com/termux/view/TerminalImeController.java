@@ -214,6 +214,9 @@ public final class TerminalImeController {
             } else if (!committedText.isEmpty()) {
                 List<PreeditLayout.Cluster> clusters = PreeditLayout.clusters(committedText, true);
                 committedText = committedText.substring(0, clusters.get(clusters.size() - 1).startUtf16);
+            } else if (documentOffset > 0) {
+                // Gboard moves its cached caret even when the terminal has nothing left to erase.
+                documentOffset--;
             }
             flushedText = null;
             flushedWord = null;
