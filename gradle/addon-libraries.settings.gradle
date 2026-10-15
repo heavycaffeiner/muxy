@@ -2,6 +2,17 @@ def muxyRoot = new File(settingsDir, '../muxy')
 if (!new File(muxyRoot, 'terminal-emulator/native/PIN.txt').isFile()) {
     throw new GradleException('Clone the pinned muxy repository beside this addon before building')
 }
+def pinFile = new File(settingsDir, 'MUXY_CORE.txt')
+if (!pinFile.isFile() || !(pinFile.text.trim() ==~ /[a-f0-9]{40}/)) {
+    throw new GradleException('Missing or invalid MUXY_CORE.txt')
+}
+if (new File(muxyRoot, '.git').exists()) {
+    def revision = new ProcessBuilder('git', '-C', muxyRoot.absolutePath, 'rev-parse', 'HEAD').start()
+    def actual = revision.inputStream.getText('UTF-8').trim()
+    if (revision.waitFor() != 0 || actual != pinFile.text.trim()) {
+        throw new GradleException('The sibling muxy checkout does not match MUXY_CORE.txt')
+    }
+}
 def muxyProperties = new Properties()
 new File(muxyRoot, 'gradle.properties').withInputStream { muxyProperties.load(it) }
 

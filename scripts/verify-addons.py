@@ -43,20 +43,21 @@ def verify(root):
     if actual != seen | {"ADDON-SHA256SUMS"}:
         raise ValueError("Unexpected or missing addon artifacts")
     manifest = json.loads((root / "ADDONS.json").read_text())
-    if manifest["certificate_sha256"] != build.CERTIFICATE or manifest["core_commit"] != build.CORE:
+    if (manifest["certificate_sha256"] != build.CERTIFICATE or manifest["core_commit"] != build.CORE
+            or manifest["core_repository"] != "https://github.com/muxy-terminal/muxy"):
         raise ValueError("Unexpected addon distribution provenance")
-    expected = {f"muxy-addon-{name}-{values[0]}.apk" for name, values in build.ADDONS.items()}
+    expected = {build.apk_name(name, values[0]) for name, values in build.ADDONS.items()}
     if {path.name for path in root.glob("*.apk")} != expected:
         raise ValueError("Incomplete addon matrix")
     records = {record["file"]: record for record in manifest["addons"]}
     if len(records) != len(expected) or set(records) != expected:
         raise ValueError("Invalid addon manifest")
     for name, (version, commit, package, minimum) in build.ADDONS.items():
-        filename = f"muxy-addon-{name}-{version}.apk"
+        filename = build.apk_name(name, version)
         apk = root / filename
         record = records[filename]
         if (record["sha256"] != digest(apk) or record["commit"] != commit
-                or record["repository"] != f"https://github.com/termux/{name}"
+                or record["repository"] != f"https://github.com/muxy-terminal/{name}"
                 or record["version"] != version or record["package"] != package
                 or record["min_sdk"] != minimum or record["bytes"] != apk.stat().st_size):
             raise ValueError("Addon manifest mismatch")
@@ -74,6 +75,12 @@ def verify(root):
         if not re.search(r'android:sharedUserId[^\n]*="com\.termux"', xml):
             raise ValueError("Missing Termux shared UID: " + filename)
         with zipfile.ZipFile(apk) as archive, tempfile.TemporaryDirectory() as temporary:
+            native_core = {member.split('/')[1] for member in archive.namelist()
+                           if member.startswith('lib/') and member.endswith('/libmuxy_terminal.so')}
+            if name == "termux-float" and native_core != {"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}:
+                raise ValueError("Float does not package the four-ABI muxy native core")
+            if name != "termux-float" and native_core:
+                raise ValueError("Unexpected terminal core in a non-terminal addon")
             for member in archive.namelist():
                 if not member.startswith("lib/") or not member.endswith(".so"):
                     continue
@@ -103,10 +110,16 @@ def verify(root):
                     or path.suffix == ".jks" and path.name != "testkey_untrusted.jks"):
                 raise ValueError("Unexpected corresponding-source archive entry")
         required = [prefix + "/BUILD.txt", prefix + "/docs/en/addons-GPL-3.0.txt"]
-        required.extend(prefix + "/sources/" + repo + "/gradlew" for repo in ("termux-app", *build.ADDONS))
+        required.extend(prefix + "/sources/" + repo + "/gradlew" for repo in ("muxy", *build.ADDONS))
         names = {member.name for member in members}
         if not set(required) <= names:
             raise ValueError("Incomplete corresponding-source archive")
+        for repo in ("termux-api", "termux-float", "termux-tasker", "termux-widget"):
+            member = archive.extractfile(prefix + "/sources/" + repo + "/MUXY_CORE.txt")
+            if member is None or member.read(128).decode("ascii").strip() != build.CORE:
+                raise ValueError("Addon source does not pin the recorded muxy core")
+        if prefix + "/sources/muxy/terminal-emulator/native/PIN.txt" not in names:
+            raise ValueError("Missing native terminal source pin")
 
 
 if __name__ == "__main__":
