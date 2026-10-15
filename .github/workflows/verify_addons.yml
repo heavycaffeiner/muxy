@@ -1,0 +1,47 @@
+name: Verify Addon APKs
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Addon release tag
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: startsWith(github.event.release.tag_name || inputs.tag, 'addons-')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Check out addon release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install APK verification tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;36.0.0' 'ndk;29.0.14206865'
+
+      - name: Download and verify published addons
+        run: |
+          [[ "$RELEASE_TAG" =~ ^addons-[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mkdir artifacts
+          gh release download "$RELEASE_TAG" --dir artifacts \
+            --pattern '*.apk' --pattern '*.tar.gz' --pattern ADDONS.json \
+            --pattern ADDON-SHA256SUMS --pattern GPL-3.0.txt
+          python3 scripts/verify-addons.py artifacts

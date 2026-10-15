@@ -1,5 +1,9 @@
 # Termux application
 
+## muxy downloads
+
+Install muxy from [muxy releases](https://github.com/heavycaffeiner/muxy/releases). Use [muxy-signed addons](docs/en/addons.md) for Termux:API, Styling, Boot, Float, Tasker, and Widget. Original APKs signed by another distributor cannot share muxy's UID. Keep the main app and addons in the same signing family.
+
 [![Build status](https://github.com/termux/termux-app/workflows/Build/badge.svg)](https://github.com/termux/termux-app/actions)
 [![Testing status](https://github.com/termux/termux-app/workflows/Unit%20tests/badge.svg)](https://github.com/termux/termux-app/actions)
 [![Join the chat at https://gitter.im/termux/termux](https://badges.gitter.im/termux/termux.svg)](https://gitter.im/termux/termux)

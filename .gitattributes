@@ -2,4 +2,5 @@
 *.bat       text eol=crlf
 *.gradle    text eol=lf
 *.mk        text eol=lf
+*.patch     text eol=lf whitespace=-blank-at-eol
 *.sh        text eol=lf

@@ -1,0 +1,44 @@
+diff --git a/app/build.gradle b/app/build.gradle
+index 0f676d4..689ff23 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -45,6 +45,7 @@ android {
+     }
+ 
+     compileOptions {
++        coreLibraryDesugaringEnabled true
+         sourceCompatibility JavaVersion.VERSION_11
+         targetCompatibility JavaVersion.VERSION_11
+     }
+@@ -63,6 +64,7 @@ android {
+ }
+ 
+ dependencies {
++    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:1.1.5"
+     // required for TermuxWidgetControlsProviderService
+     implementation "org.reactivestreams:reactive-streams:1.0.3"
+     implementation "io.reactivex.rxjava2:rxjava:2.2.10"
+@@ -71,7 +73,7 @@ dependencies {
+     implementation "com.google.android.material:material:1.12.0"
+     implementation "com.google.guava:guava:24.1-jre"
+ 
+-    implementation 'com.termux.termux-app:termux-shared:7bceab88e2'
++    implementation project(":termux-shared")
+     // Use if below libraries are published locally by termux-app with `./gradlew publishReleasePublicationToMavenLocal` and used with `mavenLocal()`.
+     // If updates are done, republish there and sync project with gradle files here
+     // https://github.com/termux/termux-app/wiki/Termux-Libraries
+diff --git a/settings.gradle b/settings.gradle
+index e7b4def..fe0988b 100644
+--- a/settings.gradle
++++ b/settings.gradle
+@@ -1 +1,10 @@
+ include ':app'
++
++include ':terminal-emulator'
++project(':terminal-emulator').projectDir = new File(settingsDir, '../termux-app/terminal-emulator')
++
++include ':terminal-view'
++project(':terminal-view').projectDir = new File(settingsDir, '../termux-app/terminal-view')
++
++include ':termux-shared'
++project(':termux-shared').projectDir = new File(settingsDir, '../termux-app/termux-shared')
