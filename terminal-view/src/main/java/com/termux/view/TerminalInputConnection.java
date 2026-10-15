@@ -131,8 +131,13 @@ public final class TerminalInputConnection extends BaseInputConnection {
         }
         switch (controller.keyDown(code)) {
             case COMMIT_THEN_FORWARD:
-                controller.flushComposition();
-                controller.terminalKeySent(code);
+                controller.beginBatch();
+                try {
+                    controller.flushComposition();
+                    controller.terminalKeySent(code);
+                } finally {
+                    controller.endBatch();
+                }
                 return false;
             case BACKSPACE_COMPOSITION: return controller.backspace();
             default:
@@ -177,14 +182,19 @@ public final class TerminalInputConnection extends BaseInputConnection {
 
     private boolean delete(int before, int after, boolean codepoints) {
         if (isClosed() || before < 0 || after < 0) return false;
-        if (controller.deleteSurrounding(before, after, codepoints)) return true;
-        for (int i = 0, count = controller.terminalDeletes(before); i < count; i++) {
-            session.forward(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL), false, true);
+        controller.beginBatch();
+        try {
+            if (controller.deleteSurrounding(before, after, codepoints)) return true;
+            for (int i = 0, count = controller.terminalDeletes(before); i < count; i++) {
+                session.forward(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL), false, true);
+            }
+            for (int i = 0, count = controller.terminalDeletes(after); i < count; i++) {
+                session.forward(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_FORWARD_DEL), false, true);
+            }
+            return true;
+        } finally {
+            controller.endBatch();
         }
-        for (int i = 0, count = controller.terminalDeletes(after); i < count; i++) {
-            session.forward(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_FORWARD_DEL), false, true);
-        }
-        return true;
     }
 
     @Override public boolean deleteSurroundingText(int before, int after) { return delete(before, after, false); }
@@ -288,14 +298,19 @@ public final class TerminalInputConnection extends BaseInputConnection {
             controller.abandonComposition();
             return session.forward(event, false, true);
         }
-        switch (controller.keyDown(event.getKeyCode())) {
-            case COMMIT_THEN_FORWARD:
-                controller.flushComposition();
-                return session.forward(event, false, true);
-            case BACKSPACE_COMPOSITION:
-                localKeys.add(event.getKeyCode());
-                return controller.backspace();
-            default: return session.forward(event, controller.isComposing(), true);
+        controller.beginBatch();
+        try {
+            switch (controller.keyDown(event.getKeyCode())) {
+                case COMMIT_THEN_FORWARD:
+                    controller.flushComposition();
+                    return session.forward(event, false, true);
+                case BACKSPACE_COMPOSITION:
+                    localKeys.add(event.getKeyCode());
+                    return controller.backspace();
+                default: return session.forward(event, controller.isComposing(), true);
+            }
+        } finally {
+            controller.endBatch();
         }
     }
 

@@ -403,7 +403,6 @@ public final class TerminalView extends View {
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
         if (mEmulator == null || mEmulator.isClosed()) return null;
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT;
-        if (mClient.shouldEnforceCharBasedInput()) outAttrs.inputType |= InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN | EditorInfo.IME_FLAG_NO_EXTRACT_UI;
         CompositionState initial = mInputConnection == null ? CompositionState.EMPTY : mInputConnection.editorComposition();
         int base = mInputConnection == null ? 0 : mInputConnection.documentOffset();
@@ -793,11 +792,6 @@ public final class TerminalView extends View {
                         return onKeyUp(keyCode, event);
                 }
             }
-        } else if (mClient.shouldUseCtrlSpaceWorkaround() &&
-                   keyCode == KeyEvent.KEYCODE_SPACE && event.isCtrlPressed()) {
-            /* ctrl+space does not work on some ROMs without this workaround.
-               However, this breaks it on devices where it works out of the box. */
-            return onKeyDown(keyCode, event);
         }
         return super.onKeyPreIme(keyCode, event);
     }
@@ -805,9 +799,6 @@ public final class TerminalView extends View {
     /**
      * Key presses in software keyboards will generally NOT trigger this listener, although some
      * may elect to do so in some situations. Do not rely on this to catch software key presses.
-     * Gboard calls this when shouldEnforceCharBasedInput() is disabled (InputType.TYPE_NULL) instead
-     * of calling commitText(), with deviceId=-1. However, Hacker's Keyboard, OpenBoard, LG Keyboard
-     * call commitText().
      *
      * This function may also be called directly without android calling it, like by
      * `TerminalExtraKeys` which generates a KeyEvent manually which uses {@link KeyCharacterMap#VIRTUAL_KEYBOARD}

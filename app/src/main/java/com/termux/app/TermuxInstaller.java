@@ -20,6 +20,7 @@ import com.termux.shared.markdown.MarkdownUtils;
 import com.termux.shared.errors.Error;
 import com.termux.shared.android.PackageUtils;
 import com.termux.shared.termux.TermuxConstants;
+import com.termux.shared.termux.settings.properties.LegacyImeProperties;
 import com.termux.shared.termux.TermuxUtils;
 import com.termux.shared.termux.shell.command.environment.TermuxShellEnvironment;
 
@@ -209,6 +210,9 @@ final class TermuxInstaller {
                     for (Pair<String, String> symlink : symlinks) {
                         Os.symlink(symlink.first, symlink.second);
                     }
+
+                    LegacyImeProperties.removeFromFile(new File(TERMUX_STAGING_PREFIX_DIR,
+                        "share/examples/termux/termux.properties"));
 
                     Logger.logInfo(LOG_TAG, "Moving termux prefix staging to prefix directory.");
 

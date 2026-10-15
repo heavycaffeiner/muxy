@@ -67,8 +67,6 @@ public class TerminalTestActivity extends Activity implements TerminalViewClient
         if (manager != null) manager.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT);
     }
     @Override public boolean shouldBackButtonBeMappedToEscape() { return false; }
-    @Override public boolean shouldEnforceCharBasedInput() { return false; }
-    @Override public boolean shouldUseCtrlSpaceWorkaround() { return false; }
     @Override public boolean isTerminalViewSelected() { return true; }
     @Override public void copyModeChanged(boolean selected) {}
     @Override public boolean onKeyDown(int code, KeyEvent event, TerminalSession current) { return false; }

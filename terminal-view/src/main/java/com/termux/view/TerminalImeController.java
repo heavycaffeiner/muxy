@@ -2,6 +2,7 @@ package com.termux.view;
 
 import android.view.KeyEvent;
 
+import com.termux.terminal.NativeKeyMap;
 import com.termux.terminal.TerminalText;
 
 import java.util.List;
@@ -206,22 +207,29 @@ public final class TerminalImeController {
 
     // A submitted line or terminal navigation ends the suffix that an IME may rewrite.
     public void terminalKeySent(int code) {
-        if (code == KeyEvent.KEYCODE_DEL && !committedText.isEmpty()) {
-            List<PreeditLayout.Cluster> clusters = PreeditLayout.clusters(committedText, true);
-            committedText = committedText.substring(0, clusters.get(clusters.size() - 1).startUtf16);
+        if (code == KeyEvent.KEYCODE_DEL) {
+            if (!releasedText.isEmpty()) {
+                List<PreeditLayout.Cluster> clusters = PreeditLayout.clusters(releasedText, true);
+                releasedText = releasedText.substring(0, clusters.get(clusters.size() - 1).startUtf16);
+            } else if (!committedText.isEmpty()) {
+                List<PreeditLayout.Cluster> clusters = PreeditLayout.clusters(committedText, true);
+                committedText = committedText.substring(0, clusters.get(clusters.size() - 1).startUtf16);
+            }
+            flushedText = null;
+            flushedWord = null;
             publish(composition);
         } else if (code == KeyEvent.KEYCODE_SPACE) {
             remember(" ");
             publish(composition);
-        } else if (code != KeyEvent.KEYCODE_DEL) {
+        } else {
             documentOffset += committedText.length() + releasedText.length() + composition.text.length();
             committedText = "";
             releasedText = "";
-            publish(CompositionState.EMPTY);
-            if (code != KeyEvent.KEYCODE_ENTER && code != KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            if (code == KeyEvent.KEYCODE_UNKNOWN) {
                 flushedText = null;
                 flushedWord = null;
             }
+            publish(CompositionState.EMPTY);
         }
     }
 
@@ -290,7 +298,8 @@ public final class TerminalImeController {
 
     public KeyDecision keyDown(int code) {
         if (!isComposing()) return KeyDecision.FORWARD;
-        if (code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER || code == KeyEvent.KEYCODE_SPACE) {
+        if (code == KeyEvent.KEYCODE_SPACE || (NativeKeyMap.isSpecial(code)
+                && code != KeyEvent.KEYCODE_DEL && code != KeyEvent.KEYCODE_ESCAPE)) {
             return KeyDecision.COMMIT_THEN_FORWARD;
         }
         return code == KeyEvent.KEYCODE_DEL ? KeyDecision.BACKSPACE_COMPOSITION : KeyDecision.FORWARD;

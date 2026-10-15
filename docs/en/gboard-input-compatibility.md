@@ -24,6 +24,22 @@ Legacy `setComposingText` remains supported. Settled Hangul syllables are releas
 
 Android can call `onCreateInputConnection` and discard its result while retaining an earlier connection. New connection wrappers share the editor session without closing the served wrapper. An explicit terminal session reset invalidates all wrappers. Closed wrappers reject callbacks.
 
+## Repeated deletion and navigation follow-up
+
+The editor could retain `releasedText` after `finishComposingText` and terminal Backspace. Later replacement ranges then referred to characters that no longer existed at the PTY. Backspace now removes the released suffix before the ordinary committed suffix. Deletion also clears the pending flush echo guard, so retyping the same syllable is not suppressed.
+
+Arrow keys, Tab, Home/End, forward Delete, and function keys now flush local preedit before forwarding the key and invalidating the editable range. Escape and Ctrl cancellation still discard undecided preedit. A matching late IME commit is consumed once after navigation. Flush and invalidation publish one final editor state, including the direct extra-key path. Multi-character deletion requests also publish only their final state.
+
+Removed the `enforce-char-based-input` and `ctrl-space-workaround` properties, their accessors, and their View/client branches. The terminal always declares `TYPE_CLASS_TEXT`, without password/no-suggestion flags. The app removes active and commented occurrences of the two keys from both user property paths and the installed example. Fresh bootstrap extraction cleans the example before the prefix is activated. Unrelated bytes and line endings are preserved; updates use a synced temporary file and atomic replacement. Cleanup errors are logged and shown without blocking settings reads. Keyboard visibility, hardware-keyboard visibility policy, extra keys, and supported shortcuts remain available.
+
+Current verification:
+
+- Debug and release host tests pass: 159 terminal-emulator, 49 terminal-view, and eight app tests per build type. Four-ABI debug APK build and terminal-view lint pass.
+- Android connection/View/pointer suites report 48 scenarios each on API 21 x86, API 34 x86_64, and API 35 x86_64, with no failures. API 21 skips ten scenarios; API 34/35 skip the manual live-typing scenario when its argument is absent. Some API 34-only assertions also return early on older Android. Regressions cover released-prefix deletion, navigation flush ordering, late commits, replacement offsets after navigation, and the text-only editor configuration.
+- Live Gboard `18.4.1.985164140-release-arm64-v8a` on API 35 x86_64 passes ordinary `안녕 한글 안자 과의`, eight touch Backspaces followed by `안녕`, eight injected Backspace key events followed by `안녕`, and each arrow key or Tab between `안녕` and `한글`. Assertions compare actual PTY bytes, including the navigation escape sequence or tab.
+
+Live tests use the emulator and ARM translation, not a physical device. These scenarios do not establish that every intermittent failure, IME version, or TUI binding is covered. Japanese/Chinese candidate IMEs and Samsung Keyboard still need live verification.
+
 ## Physical Shift and touchpad follow-up (muxy only)
 
 A modifier-only `KeyEvent` was treated as new terminal input. In the committed-jamo path, pressing Shift after `이` invalidated the range Gboard needed to replace with `있`. Modifier down/up events now leave the editor document and preedit intact. Printable Shift chords and Ctrl shortcuts keep their existing paths.

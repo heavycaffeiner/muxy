@@ -25,14 +25,6 @@ public class TermuxTerminalViewClientBase implements TerminalViewClient {
         return false;
     }
 
-    public boolean shouldEnforceCharBasedInput() {
-        return false;
-    }
-
-    public boolean shouldUseCtrlSpaceWorkaround() {
-        return false;
-    }
-
     @Override
     public boolean isTerminalViewSelected() {
         return true;

@@ -255,6 +255,83 @@ public class TerminalInputConnectionTest {
         });
     }
 
+    @Test public void finishedHangulAndRepeatedBackspaceDoNotLeaveReleasedTextInTheEditor() {
+        onMain(() -> {
+            connection.setComposingText("안녕", 1);
+            connection.finishComposingText();
+            connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL));
+            connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL));
+            assertEquals("", connection.getTextBeforeCursor(100, 0));
+            assertEquals(-1, connection.composingStart());
+            connection.commitText("ㅇ", 1);
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                assertTrue(connection.replaceText(0, 1, "아", 1, null));
+                assertTrue(connection.replaceText(0, 1, "안", 1, null));
+                assertEquals("안", connection.getTextBeforeCursor(100, 0));
+            }
+        });
+    }
+
+    @Test public void arrowFlushPublishesOnlyTheFinalEditorStateAndConsumesTheLateCommit() {
+        onMain(() -> {
+            connection.closeSession();
+            List<String> states = new ArrayList<>();
+            TerminalInputConnection observed = new TerminalInputConnection(
+                    new View(InstrumentationRegistry.getInstrumentation().getTargetContext()),
+                    new TerminalInputConnection.Sink() {
+                        @Override public void sendText(String text) {}
+                        @Override public boolean sendKey(KeyEvent event, boolean composing) { return true; }
+                        @Override public void compositionChanged(CompositionState state) {
+                            states.add(connection.documentOffset() + ":" + connection.editorComposition().text);
+                        }
+                        @Override public void cursorUpdates(boolean immediate, boolean monitor) {}
+                    });
+            connection = observed;
+            connection.setComposingText("한글", 1);
+            states.clear();
+            connection.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT));
+            assertEquals(Arrays.asList("2:"), states);
+            assertTrue(connection.composition().isEmpty());
+            connection.commitText("한글", 1);
+            assertEquals("", connection.editorComposition().text);
+            connection.commitText("ㅇ", 1);
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                assertTrue(connection.replaceText(2, 3, "아", 1, null));
+                assertTrue(connection.replaceText(2, 3, "안", 1, null));
+                assertEquals("안", connection.getTextBeforeCursor(100, 0));
+            }
+            connection.closeSession();
+        });
+    }
+
+    @Test public void directArrowAndMultiDeletePublishOnlyTheirFinalEditorStates() {
+        onMain(() -> {
+            connection.closeSession();
+            List<String> states = new ArrayList<>();
+            connection = new TerminalInputConnection(
+                    new View(InstrumentationRegistry.getInstrumentation().getTargetContext()),
+                    new TerminalInputConnection.Sink() {
+                        @Override public void sendText(String text) {}
+                        @Override public boolean sendKey(KeyEvent event, boolean composing) { return true; }
+                        @Override public void compositionChanged(CompositionState state) {
+                            states.add(connection.documentOffset() + ":" + connection.editorComposition().text);
+                        }
+                        @Override public void cursorUpdates(boolean immediate, boolean monitor) {}
+                    });
+            connection.setComposingText("한글", 1);
+            states.clear();
+            assertFalse(connection.terminalKey(KeyEvent.KEYCODE_DPAD_RIGHT));
+            assertEquals(Arrays.asList("2:"), states);
+            connection.commitText("한글", 1);
+            connection.commitText("abc", 1);
+            states.clear();
+            assertTrue(connection.deleteSurroundingText(3, 0));
+            assertEquals(Arrays.asList("2:"), states);
+            assertEquals("", connection.getTextBeforeCursor(100, 0));
+            connection.closeSession();
+        });
+    }
+
     @Test public void cursorUpdatesRejectUnknownFlags() {
         onMain(() -> {
             assertFalse(connection.requestCursorUpdates(1 << 20));

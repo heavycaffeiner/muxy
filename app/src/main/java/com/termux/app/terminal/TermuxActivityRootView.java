@@ -2,13 +2,11 @@ package com.termux.app.terminal;
 
 import android.content.Context;
 import android.graphics.Rect;
-import android.inputmethodservice.InputMethodService;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.WindowInsets;
-import android.view.inputmethod.EditorInfo;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 
@@ -24,15 +22,7 @@ import com.termux.shared.view.ViewUtils;
  * The {@link TermuxActivity} relies on {@link android.view.WindowManager.LayoutParams#SOFT_INPUT_ADJUST_RESIZE)}
  * set by {@link TermuxTerminalViewClient#setSoftKeyboardState(boolean, boolean)} to automatically
  * resize the view and push the terminal up when soft keyboard is opened. However, this does not
- * always work properly. When `enforce-char-based-input=true` is set in `termux.properties`
- * and {@link com.termux.view.TerminalView#onCreateInputConnection(EditorInfo)} sets the inputType
- * to `InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS`
- * instead of the default `InputType.TYPE_NULL` for termux, some keyboards may still show suggestions.
- * Gboard does too, but only when text is copied and clipboard suggestions **and** number keys row
- * toggles are enabled in its settings. When number keys row toggle is not enabled, Gboard will still
- * show the row but will switch it with suggestions if needed. If its enabled, then number keys row
- * is always shown and suggestions are shown in an additional row on top of it. This additional row is likely
- * part of the candidates view returned by the keyboard app in {@link InputMethodService#onCreateCandidatesView()}.
+ * always work properly when keyboards show additional suggestion or number rows.
  *
  * With the above configuration, the additional clipboard suggestions row partially covers the
  * extra keys/terminal. Reopening the keyboard/activity does not fix the issue. This is either a bug
@@ -46,9 +36,6 @@ import com.termux.shared.view.ViewUtils;
  * So this may in fact be due to Gboard but https://stackoverflow.com/questions/57567272 suggests
  * otherwise. Another similar report https://stackoverflow.com/questions/66761661.
  * Also check https://github.com/termux/termux-app/issues/1539.
- *
- * This overlap may happen even without `enforce-char-based-input=true` for keyboards with extended layouts
- * like number row, etc.
  *
  * To fix these issues, `activity_termux.xml` has the constant 1sp transparent
  * `activity_termux_bottom_space_view` View at the bottom. This will appear as a line matching the

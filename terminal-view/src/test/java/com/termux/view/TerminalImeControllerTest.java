@@ -18,6 +18,8 @@ public class TerminalImeControllerTest {
 
     @Before
     public void setUp() {
+        events.clear();
+        terminal.setLength(0);
         ime = new TerminalImeController(new TerminalImeController.Sink() {
             @Override public void sendText(String text) {
                 events.add("text:" + text);
@@ -310,6 +312,50 @@ public class TerminalImeControllerTest {
         assertFalse(ime.replaceText(0, 1, "b", 1));
         assertTrue(ime.replaceText(4999, 5000, "b", 1));
         assertEquals(text.substring(0, 4999) + "b", terminal.toString());
+    }
+
+    @Test public void repeatedBackspaceAfterFinishingHangulClearsReleasedContext() {
+        ime.composingText("안녕", 1);
+        ime.finishComposing();
+        ime.terminalKeySent(KeyEvent.KEYCODE_DEL);
+        terminal.setLength(0);
+        ime.terminalKeySent(KeyEvent.KEYCODE_DEL);
+        assertEquals("", ime.editorComposition().text);
+        assertEquals(-1, ime.composingStart());
+        ime.commitText("ㅇ");
+        assertTrue(ime.replaceText(0, 1, "아", 1));
+        assertTrue(ime.replaceText(0, 1, "안", 1));
+        assertEquals("안", terminal.toString());
+    }
+
+    @Test public void navigationCommitsPreeditBeforeInvalidatingItsEditableRange() {
+        for (int code : new int[]{KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_TAB,
+                KeyEvent.KEYCODE_MOVE_HOME, KeyEvent.KEYCODE_MOVE_END, KeyEvent.KEYCODE_FORWARD_DEL,
+                KeyEvent.KEYCODE_F1}) {
+            setUp();
+            ime.composingText("한글", 1);
+            assertEquals(TerminalImeController.KeyDecision.COMMIT_THEN_FORWARD, ime.keyDown(code));
+            ime.flushComposition();
+            ime.terminalKeySent(code);
+            assertEquals("한글", terminal.toString());
+            assertEquals("", ime.editorComposition().text);
+            assertFalse(ime.commitText("한글"));
+            int start = ime.documentOffset();
+            ime.commitText("ㅇ");
+            assertTrue(ime.replaceText(start, start + 1, "아", 1));
+            assertTrue(ime.replaceText(start, start + 1, "안", 1));
+            assertEquals("한글안", terminal.toString());
+        }
+    }
+
+    @Test public void backspaceAfterFlushDoesNotSuppressTheNextIdenticalCommit() {
+        ime.composingText("한", 1);
+        ime.flushComposition();
+        ime.terminalKeySent(KeyEvent.KEYCODE_DEL);
+        terminal.setLength(0);
+        ime.commitText("한");
+        assertEquals("한", terminal.toString());
     }
 
     @Test public void terminalDeletionCountIsBounded() {

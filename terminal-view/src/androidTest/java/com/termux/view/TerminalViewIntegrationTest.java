@@ -40,7 +40,8 @@ public class TerminalViewIntegrationTest {
     private interface Condition { boolean met(); }
 
     private void await(Condition condition) throws InterruptedException {
-        long deadline = System.nanoTime() + 20_000_000_000L;
+        long seconds = InstrumentationRegistry.getArguments().containsKey("gboardExpected") ? 120 : 20;
+        long deadline = System.nanoTime() + seconds * 1_000_000_000L;
         while (!condition.met()) {
             if (System.nanoTime() >= deadline) {
                 AtomicReference<String> diagnostic = new AtomicReference<>();
@@ -302,6 +303,49 @@ public class TerminalViewIntegrationTest {
             enter();
         });
         assertCaptured("KEEP");
+    }
+
+    @Test public void repeatedBackspaceAfterFinishedCompositionAllowsTheNextHangulReplacement() throws Exception {
+        org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 34);
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            input.setComposingText("안녕", 1);
+            input.finishComposingText();
+            for (int i = 0; i < 3; i++) {
+                input.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL));
+                input.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL));
+            }
+            input.commitText("ㅇ", 1);
+            assertTrue(input.replaceText(0, 1, "아", 1, null));
+            assertTrue(input.replaceText(0, 1, "안", 1, null));
+            enter();
+        });
+        assertCaptured("안");
+    }
+
+    @Test public void navigationFlushesPreeditAndTheNextSyllableReachesThePty() throws Exception {
+        org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 34);
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            input.setComposingText("한글", 1);
+            assertTrue(activity.view.handleKeyCode(KeyEvent.KEYCODE_DPAD_LEFT, 0));
+            input.commitText("한글", 1);
+            input.commitText("ㅇ", 1);
+            assertTrue(input.replaceText(2, 3, "아", 1, null));
+            assertTrue(input.replaceText(2, 3, "안", 1, null));
+            enter();
+        });
+        assertCaptured("한글\033[D안");
+    }
+
+    @Test public void editorAlwaysUsesTextInputWithoutLegacyPasswordFlags() {
+        scenario.onActivity(activity -> {
+            EditorInfo editor = new EditorInfo();
+            assertNotNull(activity.view.onCreateInputConnection(editor));
+            assertEquals(android.text.InputType.TYPE_CLASS_TEXT, editor.inputType);
+            assertEquals(EditorInfo.IME_FLAG_NO_FULLSCREEN | EditorInfo.IME_FLAG_NO_EXTRACT_UI,
+                    editor.imeOptions);
+        });
     }
 
     @Test public void initialPrintableInputIsNotDroppedWhenTheViewIsReady() throws Exception {

@@ -213,16 +213,6 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
     }
 
     @Override
-    public boolean shouldEnforceCharBasedInput() {
-        return mActivity.getProperties().isEnforcingCharBasedInput();
-    }
-
-    @Override
-    public boolean shouldUseCtrlSpaceWorkaround() {
-        return mActivity.getProperties().isUsingCtrlSpaceWorkaround();
-    }
-
-    @Override
     public boolean isTerminalViewSelected() {
         return mActivity.getTerminalToolbarViewPager() == null || mActivity.isTerminalViewSelected() || mActivity.getTerminalView().hasFocus();
     }

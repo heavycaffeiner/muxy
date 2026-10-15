@@ -117,11 +117,6 @@ public final class TermuxPropertyConstants {
 
 
 
-    /** Defines the key for whether to enforce character based input to fix the issue where for some devices like Samsung, the letters might not appear until enter is pressed */
-    public static final String KEY_ENFORCE_CHAR_BASED_INPUT =  "enforce-char-based-input"; // Default: "enforce-char-based-input"
-
-
-
     /** Defines the key for whether text for the extra keys buttons should be all capitalized automatically */
     public static final String KEY_EXTRA_KEYS_TEXT_ALL_CAPS =  "extra-keys-text-all-caps"; // Default: "extra-keys-text-all-caps"
 
@@ -145,11 +140,6 @@ public final class TermuxPropertyConstants {
     /** Defines the key for whether to use black UI */
     @Deprecated
     public static final String KEY_USE_BLACK_UI =  "use-black-ui"; // Default: "use-black-ui"
-
-
-
-    /** Defines the key for whether to use ctrl space workaround to fix the issue where ctrl+space does not work on some ROMs */
-    public static final String KEY_USE_CTRL_SPACE_WORKAROUND =  "ctrl-space-workaround"; // Default: "ctrl-space-workaround"
 
 
 
@@ -395,12 +385,10 @@ public final class TermuxPropertyConstants {
         KEY_DISABLE_FILE_VIEW_RECEIVER,
         KEY_DISABLE_HARDWARE_KEYBOARD_SHORTCUTS,
         KEY_DISABLE_TERMINAL_SESSION_CHANGE_TOAST,
-        KEY_ENFORCE_CHAR_BASED_INPUT,
         KEY_EXTRA_KEYS_TEXT_ALL_CAPS,
         KEY_HIDE_SOFT_KEYBOARD_ON_STARTUP,
         KEY_RUN_TERMUX_AM_SOCKET_SERVER,
         KEY_TERMINAL_ONCLICK_URL_OPEN,
-        KEY_USE_CTRL_SPACE_WORKAROUND,
         KEY_USE_FULLSCREEN,
         KEY_USE_FULLSCREEN_WORKAROUND,
         TermuxConstants.PROP_ALLOW_EXTERNAL_APPS,
@@ -443,10 +431,8 @@ public final class TermuxPropertyConstants {
         KEY_DISABLE_FILE_VIEW_RECEIVER,
         KEY_DISABLE_HARDWARE_KEYBOARD_SHORTCUTS,
         KEY_DISABLE_TERMINAL_SESSION_CHANGE_TOAST,
-        KEY_ENFORCE_CHAR_BASED_INPUT,
         KEY_HIDE_SOFT_KEYBOARD_ON_STARTUP,
         KEY_TERMINAL_ONCLICK_URL_OPEN,
-        KEY_USE_CTRL_SPACE_WORKAROUND,
         KEY_USE_FULLSCREEN,
         KEY_USE_FULLSCREEN_WORKAROUND,
         TermuxConstants.PROP_ALLOW_EXTERNAL_APPS
