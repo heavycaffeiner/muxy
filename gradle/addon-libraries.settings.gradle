@@ -1,0 +1,19 @@
+def muxyRoot = new File(settingsDir, '../muxy')
+if (!new File(muxyRoot, 'terminal-emulator/native/PIN.txt').isFile()) {
+    throw new GradleException('Clone the pinned muxy repository beside this addon before building')
+}
+def muxyProperties = new Properties()
+new File(muxyRoot, 'gradle.properties').withInputStream { muxyProperties.load(it) }
+
+def modules = ['terminal-emulator', 'terminal-view', 'termux-shared']
+modules.each { module ->
+    include ":${module}"
+    project(":${module}").projectDir = new File(muxyRoot, module)
+}
+gradle.beforeProject { project ->
+    if (modules.contains(project.name)) {
+        ['minSdkVersion', 'targetSdkVersion', 'compileSdkVersion', 'ndkVersion', 'markwonVersion'].each { key ->
+            project.ext.set(key, muxyProperties.getProperty(key))
+        }
+    }
+}

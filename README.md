@@ -2,10 +2,10 @@
 
 ## muxy downloads
 
-Install muxy from [muxy releases](https://github.com/heavycaffeiner/muxy/releases). Use [muxy-signed addons](docs/en/addons.md) for Termux:API, Styling, Boot, Float, Tasker, and Widget. Original APKs signed by another distributor cannot share muxy's UID. Keep the main app and addons in the same signing family.
+Install muxy from [muxy releases](https://github.com/muxy-terminal/muxy/releases). Use [muxy-signed addons](docs/en/addons.md) for Termux:API, Styling, Boot, Float, Tasker, and Widget. Original APKs signed by another distributor cannot share muxy's UID. Keep the main app and addons in the same signing family.
 
-[![Build status](https://github.com/termux/termux-app/workflows/Build/badge.svg)](https://github.com/termux/termux-app/actions)
-[![Testing status](https://github.com/termux/termux-app/workflows/Unit%20tests/badge.svg)](https://github.com/termux/termux-app/actions)
+[![Build status](https://github.com/muxy-terminal/muxy/workflows/Build/badge.svg)](https://github.com/muxy-terminal/muxy/actions)
+[![Testing status](https://github.com/muxy-terminal/muxy/workflows/Unit%20tests/badge.svg)](https://github.com/muxy-terminal/muxy/actions)
 [![Join the chat at https://gitter.im/termux/termux](https://badges.gitter.im/termux/termux.svg)](https://gitter.im/termux/termux)
 [![Join the Termux discord server](https://img.shields.io/discord/641256914684084234.svg?label=&logo=discord&logoColor=ffffff&color=5865F2)](https://discord.gg/HXpF69X)
 [![Termux library releases at Jitpack](https://jitpack.io/v/termux/termux-app.svg)](https://jitpack.io/#termux/termux-app)
