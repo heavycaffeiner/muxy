@@ -143,7 +143,7 @@ public class PublishedApkSmokeTest {
         assertTrue(expected.matches("[a-f0-9]{64}"));
         PackageManager manager = InstrumentationRegistry.getInstrumentation().getContext().getPackageManager();
         PackageInfo info = manager.getPackageInfo("com.termux", PackageManager.GET_SIGNATURES);
-        String version = InstrumentationRegistry.getArguments().getString("expected_version", "0.119.8");
+        String version = InstrumentationRegistry.getArguments().getString("expected_version", "0.119.9");
         assertEquals(version, info.versionName);
         assertEquals(1, info.signatures.length);
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(info.signatures[0].toByteArray());
@@ -216,6 +216,32 @@ public class PublishedApkSmokeTest {
                     await("$");
                 }
             }
+        } finally {
+            info.flags = previousFlags;
+            automation.setServiceInfo(info);
+        }
+    }
+
+    @Test public void defaultKeyboardExtraKeyOpensAndHidesTheImeInAnAlternateScreenApplication() throws Exception {
+        AccessibilityServiceInfo info = automation.getServiceInfo();
+        int previousFlags = info.flags;
+        info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+        automation.setServiceInfo(info);
+        try {
+            automation.waitForIdle(500, 5000);
+            type("printf '\\033[?1049h\\033[?1000h\\033[?1006hEXTRA_KEYBOARD_READY\\r\\n'; "
+                    + "IFS= read -r value; printf '\\033[?1000l\\033[?1006l\\033[?1049l\\r\\nEXTRA_KEYBOARD_DONE\\r\\n'");
+            enter();
+            await("EXTRA_KEYBOARD_READY");
+            awaitKeyboard(true);
+            assertTrue("Missing default keyboard key", click(automation.getRootInActiveWindow(), "⌨"));
+            awaitKeyboard(false);
+            Thread.sleep(500);
+            assertTrue("Keyboard key is not reachable with the IME hidden",
+                    click(automation.getRootInActiveWindow(), "⌨"));
+            awaitKeyboard(true);
+            enter();
+            await("EXTRA_KEYBOARD_DONE");
         } finally {
             info.flags = previousFlags;
             automation.setServiceInfo(info);
