@@ -143,7 +143,7 @@ public class PublishedApkSmokeTest {
         assertTrue(expected.matches("[a-f0-9]{64}"));
         PackageManager manager = InstrumentationRegistry.getInstrumentation().getContext().getPackageManager();
         PackageInfo info = manager.getPackageInfo("com.termux", PackageManager.GET_SIGNATURES);
-        String version = InstrumentationRegistry.getArguments().getString("expected_version", "0.119.7");
+        String version = InstrumentationRegistry.getArguments().getString("expected_version", "0.119.8");
         assertEquals(version, info.versionName);
         assertEquals(1, info.signatures.length);
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(info.signatures[0].toByteArray());
@@ -174,7 +174,7 @@ public class PublishedApkSmokeTest {
                 || click(automation.getRootInActiveWindow(), "Keyboard"));
     }
 
-    @Test public void singleTapOpensKeyboardAndDoubleTapClicksWithoutOpeningIt() throws Exception {
+    @Test public void upstreamTapPolicyKeepsApplicationClicksAndKeyboardAccessSeparate() throws Exception {
         AccessibilityServiceInfo info = automation.getServiceInfo();
         int previousFlags = info.flags;
         info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
@@ -203,12 +203,14 @@ public class PublishedApkSmokeTest {
                     Thread.sleep(500);
                     assertFalse("A physical mouse tap opened the keyboard in mode " + mode, keyboardVisible());
                     tap(1000, 1900, InputDevice.SOURCE_TOUCHSCREEN);
-                    Thread.sleep(70);
-                    tap(1000, 1900, InputDevice.SOURCE_TOUCHSCREEN);
-                    Thread.sleep(android.view.ViewConfiguration.getDoubleTapTimeout() + 200);
-                    assertFalse("A double tap opened the keyboard in mode " + mode, keyboardVisible());
-                    tap(1000, 1900, InputDevice.SOURCE_TOUCHSCREEN);
-                    awaitKeyboard(true);
+                    if (mode == 0) {
+                        awaitKeyboard(true);
+                    } else {
+                        Thread.sleep(android.view.ViewConfiguration.getDoubleTapTimeout() + 200);
+                        assertFalse("A TUI click opened the keyboard in mode " + mode, keyboardVisible());
+                        openDrawerAndToggleKeyboard();
+                        awaitKeyboard(true);
+                    }
                     enter();
                     await(done);
                     await("$");

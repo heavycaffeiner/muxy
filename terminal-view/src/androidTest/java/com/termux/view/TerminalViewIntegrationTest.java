@@ -160,7 +160,7 @@ public class TerminalViewIntegrationTest {
         });
     }
 
-    @Test public void singleTouchscreenTapRequestsKeyboardWithoutSendingATuiClick() throws Exception {
+    @Test public void singleTouchscreenTapImmediatelyClicksWithoutRequestingKeyboard() throws Exception {
         prepareCapture();
         scenario.onActivity(activity -> {
             byte[] modes = "\033[?1049h\033[?1000h\033[?1006h".getBytes(StandardCharsets.UTF_8);
@@ -176,16 +176,12 @@ public class TerminalViewIntegrationTest {
                 try { assertTrue(activity.view.onTouchEvent(tap)); } finally { tap.recycle(); }
             }
         });
-        await(() -> {
-            AtomicBoolean called = new AtomicBoolean();
-            scenario.onActivity(activity -> called.set(activity.singleTapRequests == 1));
-            return called.get();
-        });
-        scenario.onActivity(activity -> enter());
-        assertCaptured("");
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
     }
 
-    @Test public void doubleTouchscreenTapSendsOneTuiClickWithoutRequestingKeyboard() throws Exception {
+    @Test public void doubleTouchscreenTapSendsTwoOrdinaryClicksWithoutRequestingKeyboard() throws Exception {
         enableMouseCapture();
         touchscreenTap(10, 10);
         Thread.sleep(70);
@@ -195,10 +191,10 @@ public class TerminalViewIntegrationTest {
             assertEquals(0, activity.singleTapRequests);
             enter();
         });
-        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m\033[<0;1;1M\033[<0;1;1m");
     }
 
-    @Test public void doubleTapWaitsForTheSecondReleaseBeforeSendingAClick() throws Exception {
+    @Test public void eachTapClicksOnlyOnItsOwnRelease() throws Exception {
         enableMouseCapture();
         touchscreenTap(10, 10);
         Thread.sleep(70);
@@ -210,7 +206,7 @@ public class TerminalViewIntegrationTest {
             try { assertTrue(activity.view.onTouchEvent(event)); } finally { event.recycle(); }
             enter();
         });
-        assertCaptured("");
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
         prepareCapture();
         scenario.onActivity(activity -> {
             android.view.MotionEvent event = android.view.MotionEvent.obtain(time, time + 50,
@@ -241,10 +237,10 @@ public class TerminalViewIntegrationTest {
         touchscreenTap(10, 10);
         awaitTapDecision();
         scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
-        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m\033[<0;1;1M\033[<0;1;1m");
     }
 
-    @Test public void secondTapDragDoesNotSendAClickOrRequestKeyboard() throws Exception {
+    @Test public void secondTapDragDoesNotSendAnExtraClickOrRequestKeyboard() throws Exception {
         enableMouseCapture();
         touchscreenTap(10, 10);
         Thread.sleep(70);
@@ -260,10 +256,10 @@ public class TerminalViewIntegrationTest {
         });
         awaitTapDecision();
         scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
-        assertCaptured("");
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
     }
 
-    @Test public void cancelledSecondTapDoesNotSendAClickOrRequestKeyboard() throws Exception {
+    @Test public void cancelledSecondTapDoesNotSendAnExtraClickOrRequestKeyboard() throws Exception {
         enableMouseCapture();
         touchscreenTap(10, 10);
         Thread.sleep(70);
@@ -278,10 +274,10 @@ public class TerminalViewIntegrationTest {
         });
         awaitTapDecision();
         scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
-        assertCaptured("");
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
     }
 
-    @Test public void heldSecondTapDoesNotSendAClickOrRequestKeyboard() throws Exception {
+    @Test public void heldSecondTapDoesNotSendAnExtraClickOrRequestKeyboard() throws Exception {
         enableMouseCapture();
         touchscreenTap(10, 10);
         Thread.sleep(70);
@@ -297,10 +293,10 @@ public class TerminalViewIntegrationTest {
         });
         awaitTapDecision();
         scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
-        assertCaptured("");
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
     }
 
-    @Test public void secondTapWithMultiplePointersDoesNotSendAClickOrRequestKeyboard() throws Exception {
+    @Test public void secondTapWithMultiplePointersDoesNotSendAnExtraClickOrRequestKeyboard() throws Exception {
         enableMouseCapture();
         touchscreenTap(10, 10);
         Thread.sleep(70);
@@ -328,7 +324,7 @@ public class TerminalViewIntegrationTest {
         });
         awaitTapDecision();
         scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
-        assertCaptured("");
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
     }
 
     @Test public void doubleTapWithoutMouseReportingDoesNotRequestKeyboard() throws Exception {
@@ -338,6 +334,101 @@ public class TerminalViewIntegrationTest {
         touchscreenTap(10, 10);
         awaitTapDecision();
         scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
+        assertCaptured("");
+    }
+
+    @Test public void alternateScreenWithoutMouseReportingAllowsKeyboardTaps() throws Exception {
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            byte[] bytes = "\033[?1049h".getBytes(StandardCharsets.UTF_8);
+            activity.session.getEmulator().append(bytes, bytes.length);
+        });
+        touchscreenTap(10, 10);
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(1, activity.singleTapRequests); enter(); });
+        assertCaptured("");
+    }
+
+    @Test public void clickThatExitsAlternateScreenDoesNotBecomeAKeyboardRequest() throws Exception {
+        enableMouseCapture();
+        touchscreenTap(10, 10);
+        scenario.onActivity(activity -> {
+            byte[] bytes = "\033[?1000l\033[?1049l".getBytes(StandardCharsets.UTF_8);
+            activity.session.getEmulator().append(bytes, bytes.length);
+        });
+        awaitTapDecision();
+        scenario.onActivity(activity -> assertEquals(0, activity.singleTapRequests));
+        touchscreenTap(10, 10);
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(1, activity.singleTapRequests); enter(); });
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
+    }
+
+    @Test public void clickThatDisablesMouseOnTheSameScreenDoesNotRequestKeyboard() throws Exception {
+        enableMouseCapture();
+        touchscreenTap(10, 10);
+        scenario.onActivity(activity -> {
+            byte[] bytes = "\033[?1000l".getBytes(StandardCharsets.UTF_8);
+            activity.session.getEmulator().append(bytes, bytes.length);
+        });
+        awaitTapDecision();
+        scenario.onActivity(activity -> assertEquals(0, activity.singleTapRequests));
+        touchscreenTap(10, 10);
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(1, activity.singleTapRequests); enter(); });
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
+    }
+
+    @Test public void mouseModeChangingDuringContactDoesNotSendAnUnintendedClick() throws Exception {
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            long time = android.os.SystemClock.uptimeMillis();
+            android.view.MotionEvent down = android.view.MotionEvent.obtain(time, time,
+                    android.view.MotionEvent.ACTION_DOWN, 10, 10, 0);
+            android.view.MotionEvent up = android.view.MotionEvent.obtain(time, time + 20,
+                    android.view.MotionEvent.ACTION_UP, 10, 10, 0);
+            down.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+            up.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+            try {
+                activity.view.onTouchEvent(down);
+                byte[] bytes = "\033[?1000h\033[?1006h".getBytes(StandardCharsets.UTF_8);
+                activity.session.getEmulator().append(bytes, bytes.length);
+                activity.view.onTouchEvent(up);
+            } finally { down.recycle(); up.recycle(); }
+        });
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
+        assertCaptured("");
+    }
+
+    @Test public void screenChangingBeforeTapConfirmationSuppressesTheOldKeyboardRequest() throws Exception {
+        prepareCapture();
+        touchscreenTap(10, 10);
+        scenario.onActivity(activity -> {
+            byte[] bytes = "\033[?1049h".getBytes(StandardCharsets.UTF_8);
+            activity.session.getEmulator().append(bytes, bytes.length);
+        });
+        awaitTapDecision();
+        scenario.onActivity(activity -> assertEquals(0, activity.singleTapRequests));
+        touchscreenTap(10, 10);
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(1, activity.singleTapRequests); enter(); });
+        assertCaptured("");
+    }
+
+    @Test public void closedInputGenerationRejectsThePendingTap() throws Exception {
+        prepareCapture();
+        touchscreenTap(10, 10);
+        scenario.onActivity(activity -> {
+            activity.view.clearFocus();
+            activity.view.requestFocus();
+        });
+        awaitTapDecision();
+        scenario.onActivity(activity -> {
+            assertEquals(0, activity.singleTapRequests);
+            input = activity.view.onCreateInputConnection(new EditorInfo());
+            enter();
+        });
         assertCaptured("");
     }
 

@@ -1,21 +1,27 @@
-# Touchscreen keyboard and TUI clicks
+# Terminal taps and alternate-screen keyboard access
 
-A single touchscreen tap opens the software keyboard without sending a terminal mouse click. This works on ordinary and alternate screens, including when an application enables mouse reporting. Single-tap handling waits for Android to rule out a double tap.
+Touch routing follows the original Termux policy:
 
-A completed double tap sends one mouse press/release pair at the second tap's position when the application requests mouse reports. It does not request the keyboard or run the single-tap URL action. Without mouse reporting, a double tap does not send terminal input. It does not hide a keyboard that is already open.
+- With mouse reporting enabled, a touchscreen tap sends one immediate mouse press/release pair on finger release. It does not request the software keyboard.
+- Without mouse reporting, a confirmed single tap requests the keyboard. This works on both primary and alternate screens.
+- Double tap has no custom action. With mouse reporting, each tap is an ordinary click. Without mouse reporting, the double tap does not request the keyboard.
 
-The first tap no longer sends an immediate click. Moving the second contact beyond touch slop, holding it, adding another finger, or cancelling the gesture prevents the click. Long-press selection, pinch scaling, physical mouse input, and touchpad scrolling keep their existing paths.
+Alternate-screen mode alone does not indicate whether an application wants mouse input or keyboard input. The terminal protocol does not expose TUI widget focus. For an application that keeps mouse reporting enabled, use the drawer Keyboard button, extra-key keyboard toggle, or Ctrl+Alt+K. Float's explicit window controls and keyboard shortcut remain available.
 
-The terminal protocol does not expose TUI widget focus. This gesture split is explicit: tap once for keyboard access and twice for an application click, rather than guessing whether a cell contains a text field or a button.
+## Mode transitions
 
-The drawer's Keyboard button, extra-key keyboard toggle, and Ctrl+Alt+K remain available. Keyboard-disabled and hardware-keyboard policies still apply. Physical mouse and touchpad events do not open the keyboard.
+Each contact records its emulator, input generation, mouse-reporting state, and active screen at touch down. A changed session or changed screen/mouse state invalidates that contact's action. A click that exits a TUI cannot turn into a delayed keyboard request when Android later confirms the same tap. A new tap on the resulting shell works normally.
 
-## Regression coverage
+Dragging, holding, cancellation, multitouch, physical pointers, text selection, and touchpad scrolling keep separate paths. Finger movement beyond touch slop or a held/cancelled contact does not become an application click. A selection-dismissal tap does not also click the application.
 
-Real PTY/View tests check that a single tap requests keyboard access without mouse bytes, a double tap sends exactly one SGR click without a single-tap callback, cancelled or dragged second taps do not click, and a double tap without mouse reporting does not create input.
+Float uses the same shared View policy and also checks mouse reporting in its single-tap client. Its outer overlay restores window focus on touch down without opening the keyboard on every release. Launch and explicit controls retain keyboard access.
 
-The installed-app test covers ordinary and alternate screens with mouse reporting disabled and with modes 1000, 1002, and 1003. It checks single-tap keyboard access, double-tap keyboard suppression, and physical mouse exclusion. Existing pointer tests cover physical press/release and touchpad scrolling.
+## Verification coverage
 
-The signed test APK passes the eight-case ordinary/alternate-screen and mouse-mode matrix on API 35 with Gboard 18.4.1. Android connection/View/pointer suites complete 60 scenarios without failures on API 21, 34, and 35, with unsupported/manual cases skipped. The initial API 21 run aborted during JNI subprocess startup; the affected scenario passes alone and the complete suite passes on rerun. Host checks pass 159 emulator, 51 View, and eight app tests in each of debug and release. Release build and View lint pass.
+PTY/View regressions cover immediate single clicks, two ordinary clicks from a double tap, no custom double-tap action without mouse reporting, alternate-screen keyboard access without mouse reporting, mode changes during contact, TUI exit before delayed confirmation, screen changes before confirmation, and input-generation invalidation. Existing cancellation, movement, hold, multitouch, physical mouse, and IME regressions remain included.
 
-The coordinated addon release pins the same shared View in Float. Its overlay only restores window focus on touch down; it no longer opens the keyboard on every release. The confirmed single-tap callback requests the keyboard. Double taps, drags, and cancelled gestures therefore do not trigger the overlay's keyboard path. Explicit window controls and initial launch keep their existing keyboard access.
+Installed main-app and Float tests pass on API 35 with ordinary/alternate screens, mouse reporting disabled, and modes 1000/1002/1003. The main test verifies explicit drawer keyboard access during mouse reporting; Float's overlay/PTY test verifies the corresponding explicit control path and mouse bytes.
+
+Debug/release host tests pass 159 emulator, 51 View, and eight app tests per build type. Android connection/View/pointer suites complete 66 scenarios without failures on API 21, 34, and 35. API 21 skips 12 scenarios; API 34/35 skip optional live input. Release APK build and View lint pass.
+
+Float was checked against an exported working-source pair, not a newly published dependency pin. Its checked-in pin still references the previous release until the coordinated update is committed. Physical devices and per-widget focus in specific TUIs remain outside this protocol-level coverage.

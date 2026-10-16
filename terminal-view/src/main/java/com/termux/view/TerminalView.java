@@ -228,21 +228,38 @@ public final class TerminalView extends View {
     public TerminalView(Context context, AttributeSet attributes) { // NO_UCD (unused code)
         super(context, attributes);
         mGestureRecognizer = new GestureAndScaleRecognizer(context, new GestureAndScaleRecognizer.Listener() {
+            private TerminalEmulator tapEmulator;
+            private int tapGeneration;
+            private boolean tapMouse, tapAlternate, tapSelecting;
+
+            private boolean isCurrentTap() {
+                return mEmulator != null && mEmulator == tapEmulator && mInputGeneration == tapGeneration
+                        && mEmulator.isMouseTrackingActive() == tapMouse
+                        && mEmulator.isAlternateBufferActive() == tapAlternate;
+            }
 
             @Override
             public boolean onUp(MotionEvent event) {
                 mScrollRemainder = 0.0f;
+                if (isCurrentTap() && tapMouse && !tapSelecting && !isSelectingText()
+                        && event.isFromSource(InputDevice.SOURCE_TOUCHSCREEN) && !isPhysicalPointer(event)) {
+                    sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, true);
+                    sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, false);
+                    return true;
+                }
                 return false;
             }
 
             @Override
             public boolean onSingleTapUp(MotionEvent event) {
-                if (mEmulator == null) return true;
+                if (!isCurrentTap()) return true;
 
-                if (isSelectingText()) {
+                if (tapSelecting || isSelectingText()) {
                     stopTextSelectionMode();
                     return true;
                 }
+                // A click can disable mouse reporting before Android confirms the same tap.
+                if (tapMouse) return true;
                 requestFocus();
                 mClient.onSingleTapUp(event);
                 return true;
@@ -311,25 +328,18 @@ public final class TerminalView extends View {
             }
 
             @Override
-            public boolean onDown(float x, float y) {
-                // Why is true not returned here?
-                // https://developer.android.com/training/gestures/detector.html#detect-a-subset-of-supported-gestures
-                // Although setting this to true still does not solve the following errors when long pressing in terminal view text area
-                // ViewDragHelper: Ignoring pointerId=0 because ACTION_DOWN was not received for this pointer before ACTION_MOVE
-                // Commenting out the call to mGestureDetector.onTouchEvent(event) in GestureAndScaleRecognizer#onTouchEvent() removes
-                // the error logging, so issue is related to GestureDetector
+            public boolean onDown(MotionEvent event) {
+                tapEmulator = mEmulator;
+                tapGeneration = mInputGeneration;
+                tapMouse = mEmulator != null && mEmulator.isMouseTrackingActive();
+                tapAlternate = mEmulator != null && mEmulator.isAlternateBufferActive();
+                tapSelecting = isSelectingText();
                 return false;
             }
 
             @Override
             public boolean onDoubleTap(MotionEvent event) {
-                if (mEmulator == null || !event.isFromSource(InputDevice.SOURCE_TOUCHSCREEN)
-                        || isPhysicalPointer(event) || isSelectingText()) return false;
-                if (mEmulator.isMouseTrackingActive()) {
-                    sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, true);
-                    sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, false);
-                }
-                return true;
+                return false;
             }
 
             @Override

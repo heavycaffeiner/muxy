@@ -20,7 +20,7 @@ final class GestureAndScaleRecognizer {
 
         boolean onScale(float focusX, float focusY, float scale);
 
-        boolean onDown(float x, float y);
+        boolean onDown(MotionEvent e);
 
         boolean onUp(MotionEvent e);
 
@@ -31,7 +31,6 @@ final class GestureAndScaleRecognizer {
     private final ScaleGestureDetector mScaleDetector;
     final Listener mListener;
     boolean isAfterLongPress;
-    private boolean mDoubleTap;
     private boolean mTapCancelled;
     private float mTapX, mTapY;
     private int mTapDevice, mTapSource;
@@ -54,7 +53,7 @@ final class GestureAndScaleRecognizer {
 
             @Override
             public boolean onDown(MotionEvent e) {
-                return mListener.onDown(e.getX(), e.getY());
+                return mListener.onDown(e);
             }
 
             @Override
@@ -72,18 +71,11 @@ final class GestureAndScaleRecognizer {
 
             @Override
             public boolean onDoubleTap(MotionEvent e) {
-                mDoubleTap = true;
-                return true;
+                return mListener.onDoubleTap(e);
             }
 
             @Override
             public boolean onDoubleTapEvent(MotionEvent e) {
-                if (e.getActionMasked() == MotionEvent.ACTION_UP && mDoubleTap && !mTapCancelled
-                        && !isAfterLongPress
-                        && e.getEventTime() - e.getDownTime() < ViewConfiguration.getLongPressTimeout()) {
-                    mDoubleTap = false;
-                    return mListener.onDoubleTap(e);
-                }
                 return true;
             }
         });
@@ -112,7 +104,6 @@ final class GestureAndScaleRecognizer {
                 cancel.recycle();
             }
             isAfterLongPress = false;
-            mDoubleTap = false;
             mTapCancelled = false;
             mTapX = event.getX();
             mTapY = event.getY();
@@ -132,9 +123,8 @@ final class GestureAndScaleRecognizer {
         mScaleDetector.onTouchEvent(event);
         switch (action) {
             case MotionEvent.ACTION_UP:
-                if (!isAfterLongPress) {
-                    // This behaviour is desired when in e.g. vim with mouse events, where we do not
-                    // want to move the cursor when lifting finger after a long press.
+                if (!isAfterLongPress && !mTapCancelled
+                        && event.getEventTime() - event.getDownTime() < ViewConfiguration.getLongPressTimeout()) {
                     mListener.onUp(event);
                 }
                 break;

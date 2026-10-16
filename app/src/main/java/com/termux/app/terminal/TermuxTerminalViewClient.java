@@ -198,7 +198,8 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             }
         }
 
-        if (!e.isFromSource(InputDevice.SOURCE_MOUSE) && !e.isFromSource(InputDevice.SOURCE_TOUCHPAD)) {
+        if (!term.isMouseTrackingActive() && !e.isFromSource(InputDevice.SOURCE_MOUSE)
+                && !e.isFromSource(InputDevice.SOURCE_TOUCHPAD)) {
             if (!KeyboardUtils.areDisableSoftKeyboardFlagsSet(mActivity))
                 KeyboardUtils.showSoftKeyboard(mActivity, mActivity.getTerminalView());
             else
