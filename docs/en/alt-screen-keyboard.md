@@ -24,4 +24,4 @@ Installed main-app and Float tests pass on API 35 with ordinary/alternate screen
 
 Debug/release host tests pass 159 emulator, 51 View, and eight app tests per build type. Android connection/View/pointer suites complete 66 scenarios without failures on API 21, 34, and 35. API 21 skips 12 scenarios; API 34/35 skip optional live input. Release APK build and View lint pass.
 
-Float was checked against an exported working-source pair, not a newly published dependency pin. Its checked-in pin still references the previous release until the coordinated update is committed. Physical devices and per-widget focus in specific TUIs remain outside this protocol-level coverage.
+The coordinated 0.119.8 addon build pins the same corrected muxy revision in Float, API, Tasker, and Widget. Float's overlay tests run against those pinned sources. Physical devices and per-widget focus in specific TUIs remain outside this protocol-level coverage.

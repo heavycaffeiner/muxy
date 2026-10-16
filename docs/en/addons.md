@@ -8,12 +8,12 @@ Download the APKs from [muxy addon releases](https://github.com/muxy-terminal/mu
 
 | App | Version | Package | Minimum Android |
 | --- | --- | --- | --- |
-| Termux:API | 0.53.0+muxy.4 | `com.termux.api` | 7.0 (API 24) |
-| Termux:Styling | 0.32.1+muxy.4 | `com.termux.styling` | 5.0 (API 21) |
-| Termux:Boot | 0.8.1+muxy.4 | `com.termux.boot` | 5.0 (API 21) |
-| Termux:Float | 0.17.0+muxy.4 | `com.termux.window` | 7.0 (API 24) |
-| Termux:Tasker | 0.9.0+muxy.4 | `com.termux.tasker` | 5.0 (API 21) |
-| Termux:Widget | 0.15.0+muxy.4 | `com.termux.widget` | 7.0 (API 24) |
+| Termux:API | 0.53.0+muxy.5 | `com.termux.api` | 7.0 (API 24) |
+| Termux:Styling | 0.32.1+muxy.5 | `com.termux.styling` | 5.0 (API 21) |
+| Termux:Boot | 0.8.1+muxy.5 | `com.termux.boot` | 5.0 (API 21) |
+| Termux:Float | 0.17.0+muxy.5 | `com.termux.window` | 7.0 (API 24) |
+| Termux:Tasker | 0.9.0+muxy.5 | `com.termux.tasker` | 5.0 (API 21) |
+| Termux:Widget | 0.15.0+muxy.5 | `com.termux.widget` | 7.0 (API 24) |
 
 These APKs retain official package names and integration protocols. They are release builds, not debug APKs re-signed after download. Both muxy bootstrap variants use the same signer. The listed Android requirements come from upstream and have not been lowered.
 
@@ -43,13 +43,13 @@ sha256sum -c ADDON-SHA256SUMS
 
 The six addons live in organization forks under `muxy-terminal`. API, Float, Tasker, and Widget use a pinned checkout of muxy's `termux-shared`, `terminal-view`, and `terminal-emulator` modules. Styling and Boot do not need those modules.
 
-Float now embeds libghostty-vt and the same dedicated CJK input connection as the main app. Its virtual keys use the View input path, style reload updates native colors, and service teardown disposes the native terminal. Both terminal apps use one tap for keyboard access and two taps for one TUI click. Float's overlay no longer requests the keyboard on every touch release. The other addons keep their integration protocols and Android permission checks. They do not implement a terminal parser of their own.
+Float now embeds libghostty-vt and the same dedicated CJK input connection as the main app. Its virtual keys use the View input path, style reload updates native colors, and service teardown disposes the native terminal. Both terminal apps follow original Termux tap routing: mouse reporting selects one-tap application clicks; otherwise a single tap opens the keyboard on either screen. Double tap has no custom action. Gesture-origin checks prevent stale actions across TUI exits, mouse-mode changes, or session changes. Float's overlay no longer requests the keyboard on every touch release. The other addons keep their integration protocols and Android permission checks. They do not implement a terminal parser of their own.
 
 Requirements: Linux, Python 3.11 or newer, Git, Java 17 or 21, Android SDK platforms 34, 35 and 36, build tools 36.0.0, NDK 29.0.14206865, and Zig 0.16.0. Use the checked-in Gradle wrappers. The main muxy build is separate.
 
 ```sh
 python3 scripts/build-addons.py build/addons-new \
-  --label addons-0.119.7 \
+  --label addons-0.119.8 \
   --keystore /path/to/muxy-release.p12 \
   --password-file /path/to/muxy-release.pass
 python3 scripts/verify-addons.py build/addons-new/artifacts
