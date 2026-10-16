@@ -90,7 +90,11 @@ public class PublishedApkSmokeTest {
     private void type(String value) {
         KeyEvent[] events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(value.toCharArray());
         assertNotNull("Cannot encode test command", events);
-        for (KeyEvent event : events) assertTrue(automation.injectInputEvent(event, true));
+        for (KeyEvent event : events) {
+            assertTrue("Cannot inject key " + event.getKeyCode() + " action " + event.getAction(),
+                    automation.injectInputEvent(KeyEvent.changeTimeRepeat(event, SystemClock.uptimeMillis(), 0), true));
+            SystemClock.sleep(10);
+        }
     }
 
     private void key(int code) {
@@ -139,7 +143,7 @@ public class PublishedApkSmokeTest {
         assertTrue(expected.matches("[a-f0-9]{64}"));
         PackageManager manager = InstrumentationRegistry.getInstrumentation().getContext().getPackageManager();
         PackageInfo info = manager.getPackageInfo("com.termux", PackageManager.GET_SIGNATURES);
-        String version = InstrumentationRegistry.getArguments().getString("expected_version", "0.119.6");
+        String version = InstrumentationRegistry.getArguments().getString("expected_version", "0.119.7");
         assertEquals(version, info.versionName);
         assertEquals(1, info.signatures.length);
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(info.signatures[0].toByteArray());
@@ -157,30 +161,58 @@ public class PublishedApkSmokeTest {
         if (automation != null) automation.setRotation(UiAutomation.ROTATION_UNFREEZE);
     }
 
-    @Test public void alternateScreenTouchReopensTheKeyboardWhileMouseInputRemainsEnabled() throws Exception {
+    private void openDrawerAndToggleKeyboard() throws Exception {
+        long time = SystemClock.uptimeMillis();
+        for (int action : new int[]{KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP}) {
+            assertTrue(automation.injectInputEvent(new KeyEvent(time, SystemClock.uptimeMillis(), action,
+                    KeyEvent.KEYCODE_DPAD_RIGHT, 0, KeyEvent.META_CTRL_ON | KeyEvent.META_ALT_ON,
+                    KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD), true));
+        }
+        Thread.sleep(500);
+        automation.waitForIdle(200, 5000);
+        assertTrue("Missing explicit keyboard toggle", click(automation.getRootInActiveWindow(), "KEYBOARD")
+                || click(automation.getRootInActiveWindow(), "Keyboard"));
+    }
+
+    @Test public void singleTapOpensKeyboardAndDoubleTapClicksWithoutOpeningIt() throws Exception {
         AccessibilityServiceInfo info = automation.getServiceInfo();
         int previousFlags = info.flags;
         info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
         automation.setServiceInfo(info);
         try {
-            for (int mode : new int[]{0, 1000, 1002, 1003}) {
-                String enableMouse = mode == 0 ? "" : "\\033[?" + mode + "h\\033[?1006h";
-                String ready = "ALT_KEYBOARD_READY_" + mode;
-                type("printf '\\033[?1049h" + enableMouse + ready + "\\r\\n'; "
-                        + "IFS= read -r value; printf '\\033[?1000l\\033[?1002l\\033[?1003l\\033[?1006l\\033[?1049l'");
-                enter();
-                await(ready);
-                awaitKeyboard(true);
-                key(KeyEvent.KEYCODE_BACK);
-                awaitKeyboard(false);
-                tap(100, 300, InputDevice.SOURCE_MOUSE);
-                Thread.sleep(500);
-                assertFalse("A physical mouse tap opened the keyboard in mode " + mode, keyboardVisible());
-                tap(100, 300, InputDevice.SOURCE_TOUCHSCREEN);
-                awaitKeyboard(true);
-                enter();
-                await("$");
-                assertTrue("Exiting alternate screen lost keyboard access in mode " + mode, keyboardVisible());
+            automation.waitForIdle(500, 5000);
+            for (boolean alternate : new boolean[]{false, true}) {
+                for (int mode : new int[]{0, 1000, 1002, 1003}) {
+                    String enableMouse = mode == 0 ? "" : "\\033[?" + mode + "h\\033[?1006h";
+                    if (!keyboardVisible()) {
+                        openDrawerAndToggleKeyboard();
+                        awaitKeyboard(true);
+                    }
+                    String ready = "POINTER_KEYBOARD_READY_" + alternate + "_" + mode;
+                    String done = "POINTER_KEYBOARD_DONE_" + alternate + "_" + mode;
+                    automation.waitForIdle(500, 5000);
+                    type("printf '" + (alternate ? "\\033[?1049h" : "") + enableMouse + ready + "\\r\\n'; "
+                            + "IFS= read -r value; printf '\\033[?1000l\\033[?1002l\\033[?1003l\\033[?1006l"
+                            + (alternate ? "\\033[?1049l" : "") + "\\r\\n" + done + "\\r\\n'");
+                    enter();
+                    await(ready);
+                    awaitKeyboard(true);
+                    key(KeyEvent.KEYCODE_BACK);
+                    awaitKeyboard(false);
+                    tap(1000, 1900, InputDevice.SOURCE_MOUSE);
+                    Thread.sleep(500);
+                    assertFalse("A physical mouse tap opened the keyboard in mode " + mode, keyboardVisible());
+                    tap(1000, 1900, InputDevice.SOURCE_TOUCHSCREEN);
+                    Thread.sleep(70);
+                    tap(1000, 1900, InputDevice.SOURCE_TOUCHSCREEN);
+                    Thread.sleep(android.view.ViewConfiguration.getDoubleTapTimeout() + 200);
+                    assertFalse("A double tap opened the keyboard in mode " + mode, keyboardVisible());
+                    tap(1000, 1900, InputDevice.SOURCE_TOUCHSCREEN);
+                    awaitKeyboard(true);
+                    enter();
+                    await(done);
+                    await("$");
+                }
             }
         } finally {
             info.flags = previousFlags;

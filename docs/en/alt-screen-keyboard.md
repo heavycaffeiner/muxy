@@ -1,16 +1,21 @@
-# Alternate-screen keyboard access
+# Touchscreen keyboard and TUI clicks
 
-A touchscreen tap reached the terminal client, but the app refused to show the software keyboard while the terminal application requested mouse reports. Alternate-screen applications commonly enable those reports, so dismissing the keyboard could leave no way to reopen it by tapping the terminal.
+A single touchscreen tap opens the software keyboard without sending a terminal mouse click. This works on ordinary and alternate screens, including when an application enables mouse reporting. Single-tap handling waits for Android to rule out a double tap.
 
-The app now permits touchscreen keyboard requests independently of mouse reporting. Physical mouse and touchpad taps do not open the software keyboard. The existing disabled-keyboard flag, URL-tap behavior, text-selection behavior, and remote click reports remain unchanged.
+A completed double tap sends one mouse press/release pair at the second tap's position when the application requests mouse reports. It does not request the keyboard or run the single-tap URL action. Without mouse reporting, a double tap does not send terminal input. It does not hide a keyboard that is already open.
 
-## Verification
+The first tap no longer sends an immediate click. Moving the second contact beyond touch slop, holding it, adding another finger, or cancelling the gesture prevents the click. Long-press selection, pinch scaling, physical mouse input, and touchpad scrolling keep their existing paths.
 
-- Published muxy 0.119.2 reproduces the failure: enter alternate screen with mouse reporting enabled, dismiss the keyboard, and tap the screen. The keyboard does not return.
-- A locally signed APK containing the fix passes the same installed-app test on API 35 x86_64 with Gboard `18.1.3.962075747-beta-arm64-v8a`.
-- The installed-app test covers alternate screen without mouse reporting and with modes 1000, 1002, and 1003. A physical mouse tap leaves the keyboard hidden; a touchscreen tap shows it; exiting alternate screen leaves keyboard access intact.
-- A real PTY/View regression verifies one touchscreen tap callback and one mouse press/release pair in alternate screen with mode 1000 and SGR mouse reporting.
-- 2 app, 159 emulator, and 46 terminal-view JVM tests pass in debug and release. Debug/release APK builds and terminal-view debug lint pass.
-- The 42-scenario Android connection/View/pointer suite completes without failures on API 21 x86 and API 35 x86_64. Manual-input and newer-API cases are skipped when their prerequisites are absent.
+The terminal protocol does not expose TUI widget focus. This gesture split is explicit: tap once for keyboard access and twice for an application click, rather than guessing whether a cell contains a text field or a button.
 
-The local signed APK retains version 0.119.2 for this verification only. It is not a new published release. Physical devices and OEM keyboard variations remain unverified. Remotly was not changed.
+The drawer's Keyboard button, extra-key keyboard toggle, and Ctrl+Alt+K remain available. Keyboard-disabled and hardware-keyboard policies still apply. Physical mouse and touchpad events do not open the keyboard.
+
+## Regression coverage
+
+Real PTY/View tests check that a single tap requests keyboard access without mouse bytes, a double tap sends exactly one SGR click without a single-tap callback, cancelled or dragged second taps do not click, and a double tap without mouse reporting does not create input.
+
+The installed-app test covers ordinary and alternate screens with mouse reporting disabled and with modes 1000, 1002, and 1003. It checks single-tap keyboard access, double-tap keyboard suppression, and physical mouse exclusion. Existing pointer tests cover physical press/release and touchpad scrolling.
+
+The signed test APK passes the eight-case ordinary/alternate-screen and mouse-mode matrix on API 35 with Gboard 18.4.1. Android connection/View/pointer suites complete 60 scenarios without failures on API 21, 34, and 35, with unsupported/manual cases skipped. The initial API 21 run aborted during JNI subprocess startup; the affected scenario passes alone and the complete suite passes on rerun. Host checks pass 159 emulator, 51 View, and eight app tests in each of debug and release. Release build and View lint pass.
+
+The coordinated addon release pins the same shared View in Float. Its overlay only restores window focus on touch down; it no longer opens the keyboard on every release. The confirmed single-tap callback requests the keyboard. Double taps, drags, and cancelled gestures therefore do not trigger the overlay's keyboard path. Explicit window controls and initial launch keep their existing keyboard access.

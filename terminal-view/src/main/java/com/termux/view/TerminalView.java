@@ -229,19 +229,9 @@ public final class TerminalView extends View {
         super(context, attributes);
         mGestureRecognizer = new GestureAndScaleRecognizer(context, new GestureAndScaleRecognizer.Listener() {
 
-            boolean scrolledWithFinger;
-
             @Override
             public boolean onUp(MotionEvent event) {
                 mScrollRemainder = 0.0f;
-                if (mEmulator != null && mEmulator.isMouseTrackingActive() && !event.isFromSource(InputDevice.SOURCE_MOUSE) && !isSelectingText() && !scrolledWithFinger) {
-                    // Quick event processing when mouse tracking is active - do not wait for check of double tapping
-                    // for zooming.
-                    sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, true);
-                    sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, false);
-                    return true;
-                }
-                scrolledWithFinger = false;
                 return false;
             }
 
@@ -268,7 +258,6 @@ public final class TerminalView extends View {
                     // which we do not do for touch input, only mouse in onTouchEvent().
                     if (mMousePrimaryPressed) sendMouseEventCode(e, TerminalEmulator.MOUSE_LEFT_BUTTON_MOVED, true);
                 } else {
-                    scrolledWithFinger = true;
                     distanceY += mScrollRemainder;
                     int deltaRows = (int) (distanceY / mRenderer.mFontLineSpacing);
                     mScrollRemainder = distanceY - deltaRows * mRenderer.mFontLineSpacing;
@@ -334,8 +323,13 @@ public final class TerminalView extends View {
 
             @Override
             public boolean onDoubleTap(MotionEvent event) {
-                // Do not treat is as a single confirmed tap - it may be followed by zoom.
-                return false;
+                if (mEmulator == null || !event.isFromSource(InputDevice.SOURCE_TOUCHSCREEN)
+                        || isPhysicalPointer(event) || isSelectingText()) return false;
+                if (mEmulator.isMouseTrackingActive()) {
+                    sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, true);
+                    sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, false);
+                }
+                return true;
             }
 
             @Override

@@ -135,7 +135,32 @@ public class TerminalViewIntegrationTest {
         assertCaptured(expected);
     }
 
-    @Test public void alternateScreenMouseReportingStillDeliversTheTouchscreenTapCallback() throws Exception {
+    private void touchscreenTap(float x, float y) {
+        scenario.onActivity(activity -> {
+            long time = android.os.SystemClock.uptimeMillis();
+            for (int action : new int[]{android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP}) {
+                android.view.MotionEvent event = android.view.MotionEvent.obtain(time, time + action * 20,
+                        action, x, y, 0);
+                event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+                try { assertTrue(activity.view.onTouchEvent(event)); } finally { event.recycle(); }
+            }
+        });
+    }
+
+    private void awaitTapDecision() throws InterruptedException {
+        Thread.sleep(android.view.ViewConfiguration.getDoubleTapTimeout() + 150);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+    }
+
+    private void enableMouseCapture() throws Exception {
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            byte[] modes = "\033[?1049h\033[?1000h\033[?1006h".getBytes(StandardCharsets.UTF_8);
+            activity.session.getEmulator().append(modes, modes.length);
+        });
+    }
+
+    @Test public void singleTouchscreenTapRequestsKeyboardWithoutSendingATuiClick() throws Exception {
         prepareCapture();
         scenario.onActivity(activity -> {
             byte[] modes = "\033[?1049h\033[?1000h\033[?1006h".getBytes(StandardCharsets.UTF_8);
@@ -157,7 +182,163 @@ public class TerminalViewIntegrationTest {
             return called.get();
         });
         scenario.onActivity(activity -> enter());
+        assertCaptured("");
+    }
+
+    @Test public void doubleTouchscreenTapSendsOneTuiClickWithoutRequestingKeyboard() throws Exception {
+        enableMouseCapture();
+        touchscreenTap(10, 10);
+        Thread.sleep(70);
+        touchscreenTap(10, 10);
+        awaitTapDecision();
+        scenario.onActivity(activity -> {
+            assertEquals(0, activity.singleTapRequests);
+            enter();
+        });
         assertCaptured("\033[<0;1;1M\033[<0;1;1m");
+    }
+
+    @Test public void doubleTapWaitsForTheSecondReleaseBeforeSendingAClick() throws Exception {
+        enableMouseCapture();
+        touchscreenTap(10, 10);
+        Thread.sleep(70);
+        long time = android.os.SystemClock.uptimeMillis();
+        scenario.onActivity(activity -> {
+            android.view.MotionEvent event = android.view.MotionEvent.obtain(time, time,
+                    android.view.MotionEvent.ACTION_DOWN, 10, 10, 0);
+            event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+            try { assertTrue(activity.view.onTouchEvent(event)); } finally { event.recycle(); }
+            enter();
+        });
+        assertCaptured("");
+        prepareCapture();
+        scenario.onActivity(activity -> {
+            android.view.MotionEvent event = android.view.MotionEvent.obtain(time, time + 50,
+                    android.view.MotionEvent.ACTION_UP, 10, 10, 0);
+            event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+            try { assertTrue(activity.view.onTouchEvent(event)); } finally { event.recycle(); }
+            assertEquals(0, activity.singleTapRequests);
+            enter();
+        });
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
+    }
+
+    @Test public void scrollBeforeDoubleTapDoesNotSuppressTheClick() throws Exception {
+        enableMouseCapture();
+        scenario.onActivity(activity -> {
+            long time = android.os.SystemClock.uptimeMillis();
+            for (int action : new int[]{android.view.MotionEvent.ACTION_DOWN,
+                    android.view.MotionEvent.ACTION_MOVE, android.view.MotionEvent.ACTION_UP}) {
+                android.view.MotionEvent event = android.view.MotionEvent.obtain(time, time + action * 20,
+                        action, action == android.view.MotionEvent.ACTION_DOWN ? 10 : 500, 10, 0);
+                event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+                try { assertTrue(activity.view.onTouchEvent(event)); } finally { event.recycle(); }
+            }
+        });
+        awaitTapDecision();
+        touchscreenTap(10, 10);
+        Thread.sleep(70);
+        touchscreenTap(10, 10);
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
+        assertCaptured("\033[<0;1;1M\033[<0;1;1m");
+    }
+
+    @Test public void secondTapDragDoesNotSendAClickOrRequestKeyboard() throws Exception {
+        enableMouseCapture();
+        touchscreenTap(10, 10);
+        Thread.sleep(70);
+        scenario.onActivity(activity -> {
+            long time = android.os.SystemClock.uptimeMillis();
+            for (int action : new int[]{android.view.MotionEvent.ACTION_DOWN,
+                    android.view.MotionEvent.ACTION_MOVE, android.view.MotionEvent.ACTION_UP}) {
+                android.view.MotionEvent event = android.view.MotionEvent.obtain(time, time + action * 20,
+                        action, action == android.view.MotionEvent.ACTION_DOWN ? 10 : 500, 10, 0);
+                event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+                try { assertTrue(activity.view.onTouchEvent(event)); } finally { event.recycle(); }
+            }
+        });
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
+        assertCaptured("");
+    }
+
+    @Test public void cancelledSecondTapDoesNotSendAClickOrRequestKeyboard() throws Exception {
+        enableMouseCapture();
+        touchscreenTap(10, 10);
+        Thread.sleep(70);
+        scenario.onActivity(activity -> {
+            long time = android.os.SystemClock.uptimeMillis();
+            for (int action : new int[]{android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_CANCEL}) {
+                android.view.MotionEvent event = android.view.MotionEvent.obtain(time, time + action * 20,
+                        action, 10, 10, 0);
+                event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+                try { assertTrue(activity.view.onTouchEvent(event)); } finally { event.recycle(); }
+            }
+        });
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
+        assertCaptured("");
+    }
+
+    @Test public void heldSecondTapDoesNotSendAClickOrRequestKeyboard() throws Exception {
+        enableMouseCapture();
+        touchscreenTap(10, 10);
+        Thread.sleep(70);
+        scenario.onActivity(activity -> {
+            long time = android.os.SystemClock.uptimeMillis();
+            for (int action : new int[]{android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP}) {
+                long at = action == android.view.MotionEvent.ACTION_DOWN ? time
+                        : time + android.view.ViewConfiguration.getLongPressTimeout() + 50;
+                android.view.MotionEvent event = android.view.MotionEvent.obtain(time, at, action, 10, 10, 0);
+                event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+                try { assertTrue(activity.view.onTouchEvent(event)); } finally { event.recycle(); }
+            }
+        });
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
+        assertCaptured("");
+    }
+
+    @Test public void secondTapWithMultiplePointersDoesNotSendAClickOrRequestKeyboard() throws Exception {
+        enableMouseCapture();
+        touchscreenTap(10, 10);
+        Thread.sleep(70);
+        scenario.onActivity(activity -> {
+            long time = android.os.SystemClock.uptimeMillis();
+            for (int action : new int[]{android.view.MotionEvent.ACTION_DOWN,
+                    android.view.MotionEvent.ACTION_POINTER_DOWN | 1 << android.view.MotionEvent.ACTION_POINTER_INDEX_SHIFT,
+                    android.view.MotionEvent.ACTION_POINTER_UP | 1 << android.view.MotionEvent.ACTION_POINTER_INDEX_SHIFT,
+                    android.view.MotionEvent.ACTION_UP}) {
+                int count = action == android.view.MotionEvent.ACTION_DOWN || action == android.view.MotionEvent.ACTION_UP ? 1 : 2;
+                android.view.MotionEvent.PointerProperties[] properties = new android.view.MotionEvent.PointerProperties[count];
+                android.view.MotionEvent.PointerCoords[] coordinates = new android.view.MotionEvent.PointerCoords[count];
+                for (int i = 0; i < count; i++) {
+                    properties[i] = new android.view.MotionEvent.PointerProperties();
+                    properties[i].id = i;
+                    properties[i].toolType = android.view.MotionEvent.TOOL_TYPE_FINGER;
+                    coordinates[i] = new android.view.MotionEvent.PointerCoords();
+                    coordinates[i].x = 10 + 50 * i;
+                    coordinates[i].y = 10;
+                }
+                android.view.MotionEvent event = android.view.MotionEvent.obtain(time, time + 20, action, count,
+                        properties, coordinates, 0, 0, 1, 1, 1, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, 0);
+                try { assertTrue(activity.view.onTouchEvent(event)); } finally { event.recycle(); }
+            }
+        });
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
+        assertCaptured("");
+    }
+
+    @Test public void doubleTapWithoutMouseReportingDoesNotRequestKeyboard() throws Exception {
+        prepareCapture();
+        touchscreenTap(10, 10);
+        Thread.sleep(70);
+        touchscreenTap(10, 10);
+        awaitTapDecision();
+        scenario.onActivity(activity -> { assertEquals(0, activity.singleTapRequests); enter(); });
+        assertCaptured("");
     }
 
     @Test public void physicalShiftBetweenTheVowelAndDoubleFinalPreservesBetaReplacement() throws Exception {
